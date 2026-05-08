@@ -52,9 +52,19 @@ yarn-error.log*
 # Cursor files
 .cursor/
 
-# Dexter context files (offloaded tool outputs)
-.dexter/*
+# Alesia context files (offloaded tool outputs)
+.alesia/*
 
 
 logs/
 coverage.json
+
+# Ruflo / Claude Flow
+.claude-flow/
+.swarm/
+.claude/
+.mcp.json
+
+# Claude Code Development Kit
+tasks/
+Risk.local.md
