@@ -26,6 +26,17 @@ type ToolExecutionEvent =
 
 const TOOLS_REQUIRING_APPROVAL = ['write_file', 'edit_file'] as const;
 const DEFAULT_MAX_CONCURRENCY = 10;
+const TOOL_TIMEOUT_MS = 30_000;
+
+/**
+ * Per-tool timeout overrides. `stock_screener` does an internal LLM call
+ * (`callLlm`) on the same Ollama GPU as the main agent. Ollama serializes
+ * requests, so the screener must wait for the main inference to finish
+ * before its own starts → 30s is never enough. 120s gives headroom.
+ */
+const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
+  stock_screener: 120_000,
+};
 
 interface ToolCallBatch {
   concurrent: boolean;
@@ -166,10 +177,26 @@ export class AgentToolExecutor {
         ...(this.signal ? { signal: this.signal } : {}),
       };
 
-      const toolPromise = tool.invoke(toolArgs, config).then(
-        (raw) => { channel.close(); return raw; },
-        (err) => { channel.close(); throw err; },
-      );
+      // Per-tool timeout: default 30s, overridden for tools with internal LLM
+      // calls (e.g. stock_screener). A stuck network call must not freeze the agent.
+      const toolTimeoutMs = TOOL_TIMEOUT_OVERRIDES[toolName] ?? TOOL_TIMEOUT_MS;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          channel.close();
+          reject(new Error(`Tool '${toolName}' timed out after ${toolTimeoutMs / 1000}s`));
+        }, toolTimeoutMs);
+      });
+
+      const toolPromise = Promise.race([
+        tool.invoke(toolArgs, config).then(
+          (raw) => { channel.close(); return raw; },
+          (err) => { channel.close(); throw err; },
+        ),
+        timeoutPromise,
+      ]).finally(() => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      });
 
       for await (const message of channel) {
         yield { type: 'tool_progress', tool: toolName, message } as ToolProgressEvent;

@@ -17,6 +17,8 @@ export interface RunContext {
    * anchor token estimates on real data.
    */
   lastApiInputTokens: number;
+  /** Whether the master-analysis format reminder has been injected (inject only once) */
+  formatReminderInjected: boolean;
 }
 
 export function createRunContext(query: string): RunContext {
@@ -27,5 +29,6 @@ export function createRunContext(query: string): RunContext {
     startTime: Date.now(),
     iteration: 0,
     lastApiInputTokens: 0,
+    formatReminderInjected: false,
   };
 }

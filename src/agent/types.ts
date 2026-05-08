@@ -42,7 +42,7 @@ export interface AgentConfig {
   model?: string;
   /** Model provider (e.g., 'openai', 'anthropic', 'google', 'ollama') */
   modelProvider?: string;
-  /** Maximum agent loop iterations (default: 10) */
+  /** Maximum agent loop iterations (default: 30 — see DEFAULT_MAX_ITERATIONS in agent.ts) */
   maxIterations?: number;
   /** AbortSignal for cancelling agent execution */
   signal?: AbortSignal;
@@ -246,6 +246,8 @@ export interface CompactionEvent {
   postCompactTokens?: number;
   /** Model used for the compaction call. */
   compactionModel?: string;
+  /** Error message when compaction failed (only present when success === false). */
+  errorMessage?: string;
 }
 
 /**

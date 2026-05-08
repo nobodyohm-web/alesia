@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
-import { dexterPath } from '../utils/paths.js';
+import { alesiaPath } from '../utils/paths.js';
 
 /**
  * Record of a tool call for external consumers (e.g., DoneEvent)
@@ -55,7 +55,7 @@ const DEFAULT_LIMIT_CONFIG: ToolLimitConfig = {
 /**
  * Append-only scratchpad for tracking agent work on a query.
  * Uses JSONL format (newline-delimited JSON) for resilient appending.
- * Files are persisted in .dexter/scratchpad/ for debugging/history.
+ * Files are persisted in .alesia/scratchpad/ for debugging/history.
  * 
  * This is the single source of truth for all agent work on a query.
  * 
@@ -64,13 +64,18 @@ const DEFAULT_LIMIT_CONFIG: ToolLimitConfig = {
  * - Query similarity detection to help prevent retry loops
  */
 export class Scratchpad {
-  private readonly scratchpadDir = dexterPath('scratchpad');
+  private readonly scratchpadDir = alesiaPath('scratchpad');
   private readonly filepath: string;
   private readonly limitConfig: ToolLimitConfig;
 
   // In-memory tracking for tool limits (also persisted in JSONL)
   private toolCallCounts: Map<string, number> = new Map();
   private toolQueries: Map<string, string[]> = new Map();
+
+  // In-memory cache for skill dedup. `hasExecutedSkill` was reading the entire
+  // JSONL file on every call — O(n²) over a long run. We track skill names as
+  // soon as `addToolResult` records them.
+  private executedSkills: Set<string> = new Set();
 
   // In-memory tracking for Anthropic-style context clearing (JSONL file untouched)
   // Stores indices of tool_result entries that have been cleared from context
@@ -117,6 +122,14 @@ export class Scratchpad {
       args,
       result: this.parseResultSafely(result),
     });
+
+    // Mirror skill executions into the in-memory dedup cache.
+    if (toolName === 'skill') {
+      const skillName = args?.skill;
+      if (typeof skillName === 'string' && skillName) {
+        this.executedSkills.add(skillName);
+      }
+    }
   }
 
   // ============================================================================
@@ -437,13 +450,12 @@ export class Scratchpad {
   }
 
   /**
-   * Check if a skill has already been executed in this query.
-   * Used for deduplication - each skill should only run once per query.
+   * Check if a skill has already been executed in this query. O(1) lookup —
+   * mirrored into `executedSkills` from `addToolResult`. Each skill should
+   * only run once per query.
    */
   hasExecutedSkill(skillName: string): boolean {
-    return this.readEntries().some(
-      e => e.type === 'tool_result' && e.toolName === 'skill' && e.args?.skill === skillName
-    );
+    return this.executedSkills.has(skillName);
   }
 
   /**

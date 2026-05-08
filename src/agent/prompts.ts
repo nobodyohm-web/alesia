@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getChannelProfile } from './channels.js';
-import { dexterPath } from '../utils/paths.js';
+import { alesiaPath } from '../utils/paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -30,7 +30,7 @@ export function getCurrentDate(): string {
  * Load SOUL.md content from user override or bundled file.
  */
 export async function loadSoulDocument(): Promise<string | null> {
-  const userSoulPath = dexterPath('SOUL.md');
+  const userSoulPath = alesiaPath('SOUL.md');
   try {
     return await readFile(userSoulPath, 'utf-8');
   } catch {
@@ -48,11 +48,11 @@ export async function loadSoulDocument(): Promise<string | null> {
 }
 
 /**
- * Load user-defined research rules from .dexter/RULES.md.
+ * Load user-defined research rules from .alesia/RULES.md.
  * Returns null if the file doesn't exist (rules are optional).
  */
 export async function loadRulesDocument(): Promise<string | null> {
-  const rulesPath = dexterPath('RULES.md');
+  const rulesPath = alesiaPath('RULES.md');
   try {
     return await readFile(rulesPath, 'utf-8');
   } catch {
@@ -96,7 +96,7 @@ function buildMemorySection(memoryFiles: string[], memoryContext?: string | null
 
   return `## Memory
 
-You have persistent memory stored as Markdown files in .dexter/memory/.${fileListSection}${contextSection}
+You have persistent memory stored as Markdown files in .alesia/memory/.${fileListSection}${contextSection}
 
 ### Recalling memories
 Use memory_search to recall stored facts, preferences, or notes. The search covers all
@@ -125,7 +125,7 @@ Before editing or deleting, use memory_get to verify the exact text to match.`;
 /**
  * Default system prompt used when no specific prompt is provided.
  */
-export const DEFAULT_SYSTEM_PROMPT = `You are Dexter, a helpful AI assistant.
+export const DEFAULT_SYSTEM_PROMPT = `You are Alesia, a helpful AI assistant.
 
 Current date: ${getCurrentDate()}
 
@@ -231,7 +231,7 @@ export function buildSystemPrompt(
     ? `\n## Tables (for comparative/tabular data)\n\n${profile.tables}`
     : '';
 
-  return `You are Dexter, a ${profile.label} assistant with access to research tools.
+  return `You are Alesia, a ${profile.label} assistant with access to research tools.
 
 Current date: ${getCurrentDate()}
 
@@ -248,6 +248,43 @@ ${toolDescriptions}
 - Tool results are automatically capped. If a result says "persisted to file", use read_file to access specific sections rather than processing the full dataset.
 - Only respond directly for conceptual definitions, stable historical facts, or conversational queries.
 
+## Smart Routing
+
+Before doing anything else, classify the user input and route to the matching skill via the \`skill\` tool. Only fall back to free-form tool calls when none of the patterns below match.
+
+- Contains "scanner", "search", "opportunités", "opportunities", "best stocks today", "quelles actions", "meilleur achat", or asks to find daily stock opportunities → invoke skill **opportunity-scanner**
+- Contains "crypto scanner", "crypto opportunities", "meilleure crypto", "crypto du jour", "best crypto today", or asks to scan crypto market → invoke skill **crypto-scanner**
+- Contains "memecoin", "meme coin", "degen", "100x", "moonshot", "gem", "shitcoin", "pump", or asks about trending memes → invoke skill **memecoin-scanner**
+- Crypto symbol (BTC, ETH, SOL, DOGE, ADA, XRP, DOT, AVAX, MATIC, LINK, or any standalone known crypto ticker) → invoke skill **crypto-analysis**
+- Contains "IPO", "ipo", or "introductions" (Bourse) → invoke skill **ipo-scanner**
+- Contains "portfolio" followed by a list of tickers (e.g. "portfolio FLY,AAPL,BTC") → invoke skill **portfolio-review**
+- Contains "dividende", "dividend", or "yield" + a ticker → invoke skill **dividend-analysis**
+- Contains "earnings" or "résultats" + a ticker → invoke skill **earnings-calendar**
+- Contains "compare", "vs", or "versus" + 2+ tickers → invoke skill **sector-comparison**
+- Contains "macro", "marché", "marche", "fed", "taux", "inflation", "vix", or "fomc" → invoke skill **macro-radar**
+- Contains "sentiment", "buzz", "what are people saying", "qu'est-ce que les gens disent", "actualité" + a ticker → invoke skill **news-sentiment**
+- Contains "fear and greed", "fear & greed", "F&G", "indice de peur" → call tool **fear_greed_index** directly (no skill needed)
+- Bare ticker (1-5 uppercase letters) with no other instructions → invoke skill **master-analysis**
+- After a report is delivered, if the user says "exporte", "export", "sauvegarde", or "PDF" → invoke skill **export-report**
+
+Routing rules:
+- Pick exactly ONE skill on the first turn. Do not chain skills unless the user explicitly asks for multiple analyses.
+- A skill can call other tools internally — let it run instead of pre-fetching data yourself.
+- If the input is ambiguous, ask a one-line clarifying question before routing.
+
+## Autonomous Execution (CRITICAL)
+
+When a skill returns instructions:
+- Execute ALL phases listed in the skill instructions. Do NOT stop after the first tool call.
+- NEVER ask the user "how would you like to proceed?", "what would you like me to do?", or similar. Execute autonomously.
+- Call EVERY tool specified in each phase before generating text output.
+- Your final output MUST follow the exact OUTPUT template from the skill. Do NOT freestyle or invent your own format.
+- Language: output in FRENCH unless the skill specifies otherwise.
+- If a tool call fails, note the failure and continue to the next phase. Do NOT abort the analysis.
+- Tu utilises un modèle local (Ollama). Tu DOIS être EXTRÊMEMENT discipliné sur le format de sortie.
+- Quand le skill master-analysis est invoqué, ta réponse finale DOIT contenir : (a) le header ╔═══, (b) un Score XX/100, (c) un Verdict 🟢/🟡/🔴, (d) les 7 sections numérotées (🔍 PROFIL, 📊 1. FINANCIERS CLÉS, 📡 2. VEILLE TEMPS RÉEL, ⚠️ 3. RISQUE MAJEUR, 🧬 4. SCORING ADAPTATIF, ⚖️ 5. VALORISATION, 💰 6. PRIX D'ENTRÉE, 📌 7. CONCLUSION).
+- Ne génère JAMAIS une réponse conversationnelle quand un skill est actif.
+
 ${buildSkillsSection()}
 
 ${buildMemorySection(memoryFiles ?? [], memoryContext)}
@@ -263,7 +300,7 @@ The following rules were set by the user. Follow them on every query.
 ${rulesContent}
 
 To manage these rules, the user can say "add a rule", "show my rules", "remove rule about X".
-Rules are stored in .dexter/RULES.md — use write_file or edit_file to modify them.
+Rules are stored in .alesia/RULES.md — use write_file or edit_file to modify them.
 ` : ''}
 ${soulContent ? `## Identity
 

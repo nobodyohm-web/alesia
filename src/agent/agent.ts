@@ -21,9 +21,34 @@ import { resolveProvider } from '../providers.js';
 
 
 const DEFAULT_MODEL = 'gpt-5.4';
-const DEFAULT_MAX_ITERATIONS = 10;
+// Scanners (opportunity, crypto, memecoin) routinely need 25+ tool calls just to
+// gather data before the report. 30 leaves room for failure recovery without
+// hitting the cap.
+const DEFAULT_MAX_ITERATIONS = 30;
 const MAX_OVERFLOW_RETRIES = 2;
 const OVERFLOW_KEEP_ROUNDS = 3;
+
+// Header / score / verdict are necessary; sections prove the model actually rendered the
+// 7-step report instead of a free-form narrative. We require the box header AND at least 4
+// of the 7 section emojis to consider the format respected.
+const MASTER_ANALYSIS_HEADER_MARKERS = ['╔═══', 'Score', 'Verdict'] as const;
+const MASTER_ANALYSIS_SECTION_MARKERS = [
+  '🔍 PROFIL',
+  '📊 1.',
+  '📡 2.',
+  '⚠️ 3.',
+  '🧬 4.',
+  '⚖️ 5.',
+  '💰 6.',
+  '📌 7.',
+] as const;
+const MASTER_ANALYSIS_MIN_SECTIONS = 4;
+const MASTER_ANALYSIS_RETRY_PROMPT =
+  "ERREUR DE FORMAT : Ta réponse ne suit pas le template Master Analysis. " +
+  "Tu DOIS inclure le header ╔═══, le Score XX/100, les étoiles ⭐, et les 7 sections numérotées " +
+  "(🔍 PROFIL, 📊 1. FINANCIERS CLÉS, 📡 2. VEILLE TEMPS RÉEL, ⚠️ 3. RISQUE MAJEUR, 🧬 4. SCORING ADAPTATIF, " +
+  "⚖️ 5. VALORISATION, 💰 6. PRIX D'ENTRÉE, 📌 7. CONCLUSION). " +
+  "Régénère ta réponse en suivant le template exact, en français, sans freestyle.";
 
 /**
  * The core agent class that handles the agent loop and tool execution.
@@ -45,6 +70,7 @@ export class Agent {
   private readonly memoryEnabled: boolean;
   private readonly messageQueue?: MessageQueue;
   private compactionFailures: number = 0;
+  private masterAnalysisFormatRetried: boolean = false;
 
   private constructor(
     config: AgentConfig,
@@ -126,8 +152,9 @@ export class Agent {
     while (ctx.iteration < this.maxIterations) {
       ctx.iteration++;
 
-      // Microcompact: per-turn lightweight trimming before LLM call
-      const mcResult = microcompactMessages(messages);
+      // Microcompact: per-turn lightweight trimming before LLM call.
+      // Pass `this.model` so the token trigger scales with the actual context window.
+      const mcResult = microcompactMessages(messages, this.model);
       if (mcResult.trigger) {
         messages = mcResult.messages;
         yield { type: 'microcompact', cleared: mcResult.cleared, tokensSaved: mcResult.estimatedTokensSaved } as MicrocompactEvent;
@@ -190,8 +217,50 @@ export class Agent {
 
       // No tool calls = final answer
       if (!hasToolCalls(response)) {
+        // Format enforcement: if master-analysis was invoked but the response is missing
+        // the structured template (header/score/verdict), inject a correction and retry once.
+        if (this.shouldRetryMasterAnalysisFormat(responseText ?? '', ctx)) {
+          this.masterAnalysisFormatRetried = true;
+          messages.push(response);
+          messages.push(new SystemMessage(MASTER_ANALYSIS_RETRY_PROMPT));
+          continue;
+        }
         yield* this.handleDirectResponse(responseText ?? '', ctx);
         return;
+      }
+
+      // Force final answer when master-analysis has gathered evidence from enough
+      // DISTINCT data tools. Counting raw call count would short-circuit if the LLM
+      // recovered from a failure by calling web_search 4 times — we want diversity.
+      {
+        const toolRecords = ctx.scratchpad.getToolCallRecords();
+        const masterSkillUsed = toolRecords.some(t => t.tool === 'skill' && String(t.args?.skill ?? '').includes('master-analysis'));
+        const dataTools = new Set(['yahoo_summary', 'yahoo_historical', 'rss_intelligence', 'read_filings', 'web_search']);
+        const distinctDataTools = new Set(toolRecords.filter(t => dataTools.has(t.tool)).map(t => t.tool));
+        if (masterSkillUsed && distinctDataTools.size >= 3 && ctx.iteration > 3) {
+          // All data tools called — force report generation by calling LLM without tools
+          const formatReminder = new SystemMessage(
+            `RAPPEL FORMAT (CRITICAL) — Tu as maintenant TOUTES les données. STOP les appels d'outils.\n` +
+            `Génère MAINTENANT le rapport final EXACTEMENT dans ce format :\n` +
+            `╔═══════════════════════════════════════════════════════════╗\n` +
+            `║  RAPPORT D'ANALYSE — [COMPANY] ([TICKER])                 ║\n` +
+            `║  Date : [today]    Profil : 🚀/📈/🏛️                     ║\n` +
+            `║  Score : XX/100 — ⭐⭐⭐⭐    Verdict : 🟢/🟡/🔴          ║\n` +
+            `╚═══════════════════════════════════════════════════════════╝\n` +
+            `Sections: 🔍 PROFIL, 📊 1. FINANCIERS, 📡 2. VEILLE, ⚠️ 3. RISQUE, 🧬 4. SCORING XX/100, ⚖️ 5. VALORISATION, 💰 6. PRIX ENTRÉE (USD+EUR), 📌 7. CONCLUSION\n` +
+            `Stars: 80-100=⭐⭐⭐⭐⭐ | 65-79=⭐⭐⭐⭐ | 50-64=⭐⭐⭐ | 35-49=⭐⭐ | 0-34=⭐`
+          );
+          messages.push(response);
+          messages.push(formatReminder);
+          // Call LLM WITHOUT tools to force text generation
+          const { response: finalResponse } = await callLlmWithMessages(messages, {
+            model: this.model,
+            signal: this.signal,
+          });
+          const finalText = extractTextContent(finalResponse as AIMessage);
+          yield* this.handleDirectResponse(finalText ?? '', ctx);
+          return;
+        }
       }
 
       // Push AIMessage to conversation history
@@ -237,6 +306,28 @@ export class Agent {
       const messageState = { messages };
       yield* this.manageContextThreshold(ctx, query, memoryFlushState, messageState);
       messages = messageState.messages;
+
+      // Inject format reminder for master-analysis ONCE when enough data diversity is collected
+      if (!ctx.formatReminderInjected) {
+        const toolRecords = ctx.scratchpad.getToolCallRecords();
+        const masterSkillUsed = toolRecords.some(t => t.tool === 'skill' && String(t.args?.skill ?? '').includes('master-analysis'));
+        const dataTools = new Set(['yahoo_summary', 'yahoo_historical', 'rss_intelligence', 'read_filings', 'web_search']);
+        const distinctDataTools = new Set(toolRecords.filter(t => dataTools.has(t.tool)).map(t => t.tool));
+        if (masterSkillUsed && distinctDataTools.size >= 2) {
+          ctx.formatReminderInjected = true;
+          messages.push(new SystemMessage(
+            `RAPPEL FORMAT (CRITICAL) — Tu as maintenant toutes les données. Génère le rapport EXACTEMENT dans ce format :\n` +
+            `╔═══════════════════════════════════════════════════════════╗\n` +
+            `║  RAPPORT D'ANALYSE — [COMPANY] ([TICKER])                 ║\n` +
+            `║  Date : [today]    Profil : 🚀/📈/🏛️                     ║\n` +
+            `║  Score : XX/100 — ⭐⭐⭐⭐    Verdict : 🟢/🟡/🔴          ║\n` +
+            `╚═══════════════════════════════════════════════════════════╝\n` +
+            `Sections: 🔍 PROFIL, 📊 1. FINANCIERS, 📡 2. VEILLE, ⚠️ 3. RISQUE, 🧬 4. SCORING XX/100, ⚖️ 5. VALORISATION, 💰 6. PRIX ENTRÉE (USD+EUR), 📌 7. CONCLUSION\n` +
+            `Stars: 80-100=⭐⭐⭐⭐⭐ | 65-79=⭐⭐⭐⭐ | 50-64=⭐⭐⭐ | 35-49=⭐⭐ | 0-34=⭐\n` +
+            `NE PAS utiliser un autre format. NE PAS générer de réponse narrative/conversationnelle.`
+          ));
+        }
+      }
 
       // Inject tool usage warning if approaching limits
       const toolUsageWarning = ctx.scratchpad.formatToolUsageForPrompt();
@@ -428,6 +519,20 @@ export class Agent {
   // Response handling
   // ---------------------------------------------------------------------------
 
+  /**
+   * Returns true when the master-analysis skill was invoked but the final response
+   * is missing the structured template (╔═══ header, Score, Verdict). One retry
+   * per run only — guarded by `masterAnalysisFormatRetried`.
+   */
+  private shouldRetryMasterAnalysisFormat(responseText: string, ctx: RunContext): boolean {
+    if (this.masterAnalysisFormatRetried) return false;
+    if (!ctx.scratchpad.hasExecutedSkill('master-analysis')) return false;
+    const text = responseText ?? '';
+    const headerOk = MASTER_ANALYSIS_HEADER_MARKERS.every((m) => text.includes(m));
+    const sectionsHit = MASTER_ANALYSIS_SECTION_MARKERS.filter((m) => text.includes(m)).length;
+    return !(headerOk && sectionsHit >= MASTER_ANALYSIS_MIN_SECTIONS);
+  }
+
   private async *handleDirectResponse(
     responseText: string,
     ctx: RunContext,
@@ -615,13 +720,17 @@ export class Agent {
         };
 
         return;
-      } catch {
+      } catch (compactionError) {
         this.compactionFailures++;
+        const errorMessage = compactionError instanceof Error
+          ? compactionError.message
+          : String(compactionError);
         yield {
           type: 'compaction',
           phase: 'end',
           success: false,
           preCompactTokens: estimatedContextTokens,
+          errorMessage,
         };
       }
     }

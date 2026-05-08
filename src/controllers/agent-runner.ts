@@ -94,6 +94,14 @@ export class AgentRunnerController {
     };
   }
 
+  /**
+   * Clears internal history to free up LLM context for a fresh analysis.
+   */
+  clearHistory(): void {
+    this.historyValue = [];
+    this.errorValue = null;
+  }
+
   respondToApproval(decision: ApprovalDecision) {
     if (!this.approvalResolve) {
       return;

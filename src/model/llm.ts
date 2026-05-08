@@ -13,7 +13,7 @@ import { DEFAULT_SYSTEM_PROMPT } from '@/agent/prompts';
 import type { TokenUsage } from '@/agent/types';
 import { logger } from '@/utils';
 import { classifyError, isNonRetryableError } from '@/utils/errors';
-import { resolveProvider, getProviderById } from '@/providers';
+import { resolveProvider, getProviderById, OLLAMA_NUM_CTX } from '@/providers';
 
 export const DEFAULT_PROVIDER = 'openai';
 export const DEFAULT_MODEL = 'gpt-5.4';
@@ -129,6 +129,7 @@ const MODEL_FACTORIES: Record<string, ModelFactory> = {
   ollama: (name, opts) =>
     new ChatOllama({
       model: name.replace(/^ollama:/, ''),
+      numCtx: OLLAMA_NUM_CTX,
       ...opts,
       ...(process.env.OLLAMA_BASE_URL ? { baseUrl: process.env.OLLAMA_BASE_URL } : {}),
     }),

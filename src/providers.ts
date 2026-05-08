@@ -3,6 +3,17 @@
  * When adding a new provider, add a single entry here; all other modules derive from this.
  */
 
+/**
+ * Hard-coded Ollama context window. The LangChain Ollama client passes this as `numCtx`
+ * on every call, overriding whatever the model declares natively. Anything declaring a
+ * different `contextWindow` for Ollama would mis-calibrate the auto-compact threshold.
+ *
+ * 65K is safe on M1 Max 64GB with gemma4:26b (~40GB model + ~8GB KV cache at 65K).
+ * Doubles headroom for scanner skills that routinely consume 25-30K in tool results.
+ * To push further (e.g. 128K), verify VRAM pressure with `ollama ps`.
+ */
+export const OLLAMA_NUM_CTX = 65_536;
+
 export interface ProviderDef {
   /** Slug used in config/settings (e.g., 'anthropic') */
   id: string;
@@ -79,7 +90,7 @@ export const PROVIDERS: ProviderDef[] = [
     id: 'ollama',
     displayName: 'Ollama',
     modelPrefix: 'ollama:',
-    contextWindow: 128_000,
+    contextWindow: OLLAMA_NUM_CTX,
   },
 ];
 
