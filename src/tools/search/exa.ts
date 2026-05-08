@@ -27,7 +27,7 @@ export const exaSearch = new DynamicStructuredTool({
   description:
     'Search the web for current information on any topic. Returns relevant search results with URLs and content snippets.',
   schema: z.object({
-    query: z.string().describe('The search query to look up on the web'),
+    query: z.string().min(1).describe('The search query to look up on the web'),
   }),
   func: async (input) => {
     try {
@@ -37,7 +37,7 @@ export const exaSearch = new DynamicStructuredTool({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`[Exa API] error: ${message}`);
-      throw new Error(`[Exa API] ${message}`);
+      return formatToolResult({ error: `[Exa API] ${message}`, query: input.query }, []);
     }
   },
 });

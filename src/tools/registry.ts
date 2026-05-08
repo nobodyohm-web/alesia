@@ -1,5 +1,15 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
 import { createGetFinancials, createGetMarketData, createReadFilings, createScreenStocks } from './finance/index.js';
+import { yahooQuoteTool, yahooHistoricalTool, yahooFinancialsTool, yahooKeyStatsTool, yahooSummaryTool, YAHOO_FINANCE_DESCRIPTION } from './finance/index.js';
+import { binancePriceTool, binanceKlinesTool, binanceTopMoversTool, BINANCE_DESCRIPTION } from './finance/index.js';
+import { ipoTrackerTool, IPO_TRACKER_DESCRIPTION } from './finance/index.js';
+import { insiderDetectorTool, INSIDER_DETECTOR_DESCRIPTION } from './finance/index.js';
+import { analystConsensusTool, ANALYST_CONSENSUS_DESCRIPTION } from './finance/index.js';
+import { fearGreedTool, FEAR_GREED_DESCRIPTION } from './finance/index.js';
+import { cryptoMarketCapTool, CRYPTO_MARKET_CAP_DESCRIPTION } from './finance/index.js';
+import { sectorPerformanceTool, SECTOR_PERFORMANCE_DESCRIPTION } from './finance/index.js';
+import { economicCalendarTool, ECONOMIC_CALENDAR_DESCRIPTION } from './finance/index.js';
+import { rssIntelTool, RSS_INTELLIGENCE_DESCRIPTION } from './rss/rss-intel.js';
 import { exaSearch, perplexitySearch, tavilySearch, WEB_SEARCH_DESCRIPTION, xSearchTool, X_SEARCH_DESCRIPTION } from './search/index.js';
 import { skillTool, SKILL_TOOL_DESCRIPTION } from './skill.js';
 import { webFetchTool, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
@@ -40,35 +50,47 @@ export interface RegisteredTool {
  * @returns Array of registered tools
  */
 export function getToolRegistry(model: string): RegisteredTool[] {
-  const tools: RegisteredTool[] = [
-    {
-      name: 'get_financials',
-      tool: createGetFinancials(model),
-      description: GET_FINANCIALS_DESCRIPTION,
-      compactDescription: 'Financial statements, metrics, and analyst estimates. Handles multi-company/multi-metric queries in one call.',
-      concurrencySafe: true,
-    },
-    {
-      name: 'get_market_data',
-      tool: createGetMarketData(model),
-      description: GET_MARKET_DATA_DESCRIPTION,
-      compactDescription: 'Stock/crypto prices, company news, and insider trades. Handles multi-asset queries in one call.',
-      concurrencySafe: true,
-    },
-    {
-      name: 'read_filings',
-      tool: createReadFilings(model),
-      description: READ_FILINGS_DESCRIPTION,
-      compactDescription: 'SEC filings (10-K, 10-Q, 8-K). Extracts and summarizes specific filing sections.',
-      concurrencySafe: true,
-    },
-    {
-      name: 'stock_screener',
-      tool: createScreenStocks(model),
-      description: SCREEN_STOCKS_DESCRIPTION,
-      compactDescription: 'Screen stocks by financial criteria (P/E, growth, margins, etc.).',
-      concurrencySafe: true,
-    },
+  // Paid meta-tools require FINANCIAL_DATASETS_API_KEY. When missing, omit them
+  // from the registry so the LLM can't waste turns calling tools that will throw.
+  // The system prompt routes everything through Yahoo + Binance + RSS in that case.
+  const hasFinancialDatasetsKey = Boolean(process.env.FINANCIAL_DATASETS_API_KEY);
+
+  const tools: RegisteredTool[] = [];
+
+  if (hasFinancialDatasetsKey) {
+    tools.push(
+      {
+        name: 'get_financials',
+        tool: createGetFinancials(model),
+        description: GET_FINANCIALS_DESCRIPTION,
+        compactDescription: 'Financial statements, metrics, and analyst estimates. Handles multi-company/multi-metric queries in one call.',
+        concurrencySafe: true,
+      },
+      {
+        name: 'get_market_data',
+        tool: createGetMarketData(model),
+        description: GET_MARKET_DATA_DESCRIPTION,
+        compactDescription: 'Stock/crypto prices, company news, and insider trades. Handles multi-asset queries in one call.',
+        concurrencySafe: true,
+      },
+      {
+        name: 'read_filings',
+        tool: createReadFilings(model),
+        description: READ_FILINGS_DESCRIPTION,
+        compactDescription: 'SEC filings (10-K, 10-Q, 8-K). Extracts and summarizes specific filing sections.',
+        concurrencySafe: true,
+      },
+      {
+        name: 'stock_screener',
+        tool: createScreenStocks(model),
+        description: SCREEN_STOCKS_DESCRIPTION,
+        compactDescription: 'Screen stocks by financial criteria (P/E, growth, margins, etc.).',
+        concurrencySafe: true,
+      },
+    );
+  }
+
+  tools.push(
     {
       name: 'web_fetch',
       tool: webFetchTool,
@@ -81,7 +103,9 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       tool: browserTool,
       description: BROWSER_DESCRIPTION,
       compactDescription: 'JavaScript-rendered pages and interactive navigation. Actions: navigate, snapshot, act, read, close.',
-      concurrencySafe: true,
+      // The browser tool keeps a global page + refs map. Running two browser
+      // calls in parallel would race on that shared state.
+      concurrencySafe: false,
     },
     {
       name: 'read_file',
@@ -108,7 +132,7 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       name: 'heartbeat',
       tool: heartbeatTool,
       description: HEARTBEAT_TOOL_DESCRIPTION,
-      compactDescription: 'View or update the periodic heartbeat checklist (.dexter/HEARTBEAT.md).',
+      compactDescription: 'View or update the periodic heartbeat checklist (.alesia/HEARTBEAT.md).',
       concurrencySafe: true,
     },
     {
@@ -139,7 +163,129 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       compactDescription: 'Add, edit, or delete persistent memory entries.',
       concurrencySafe: false,
     },
-  ];
+    // === Yahoo Finance Tools (FREE — No API key required) ===
+    {
+      name: 'yahoo_quote',
+      tool: yahooQuoteTool,
+      description: YAHOO_FINANCE_DESCRIPTION,
+      compactDescription: 'Free real-time stock quote from Yahoo Finance. Price, P/E, EPS, 52-week range, market cap.',
+      concurrencySafe: true,
+    },
+    {
+      name: 'yahoo_historical',
+      tool: yahooHistoricalTool,
+      description: YAHOO_FINANCE_DESCRIPTION,
+      compactDescription: 'Free historical OHLCV data from Yahoo Finance. Daily/weekly/monthly candlesticks.',
+      concurrencySafe: true,
+    },
+    {
+      name: 'yahoo_financials',
+      tool: yahooFinancialsTool,
+      description: YAHOO_FINANCE_DESCRIPTION,
+      compactDescription: 'Free income statements, balance sheets, cash flow from Yahoo Finance.',
+      concurrencySafe: true,
+    },
+    {
+      name: 'yahoo_key_stats',
+      tool: yahooKeyStatsTool,
+      description: YAHOO_FINANCE_DESCRIPTION,
+      compactDescription: 'Free key statistics: P/E, PEG, P/B, EV/EBITDA, margins, ROE, debt ratios from Yahoo Finance.',
+      concurrencySafe: true,
+    },
+    {
+      name: 'yahoo_summary',
+      tool: yahooSummaryTool,
+      description: YAHOO_FINANCE_DESCRIPTION,
+      compactDescription: 'PREFERRED: Fetches ALL financial data in ONE call (quote + stats + 3 statements). Saves 3 tool calls vs separate tools.',
+      concurrencySafe: true,
+    },
+    // === Binance Tools (FREE — No API key required) ===
+    {
+      name: 'binance_price',
+      tool: binancePriceTool,
+      description: BINANCE_DESCRIPTION,
+      compactDescription: 'Free real-time crypto price and 24h stats from Binance.',
+      concurrencySafe: true,
+    },
+    {
+      name: 'binance_klines',
+      tool: binanceKlinesTool,
+      description: BINANCE_DESCRIPTION,
+      compactDescription: 'Free historical crypto candlestick (OHLCV) data from Binance.',
+      concurrencySafe: true,
+    },
+    {
+      name: 'binance_top_movers',
+      tool: binanceTopMoversTool,
+      description: BINANCE_DESCRIPTION,
+      compactDescription: 'Free top gaining/losing crypto pairs on Binance in last 24h.',
+      concurrencySafe: true,
+    },
+    // === IPO Tracker (FREE — No API key required) ===
+    {
+      name: 'ipo_tracker',
+      tool: ipoTrackerTool,
+      description: IPO_TRACKER_DESCRIPTION,
+      compactDescription: 'Track upcoming and recent IPOs from SEC EDGAR and Nasdaq (free).',
+      concurrencySafe: true,
+    },
+    // === Insider Trading Detector (FREE — Yahoo + SEC) ===
+    {
+      name: 'insider_detector',
+      tool: insiderDetectorTool,
+      description: INSIDER_DETECTOR_DESCRIPTION,
+      compactDescription: 'Detects material insider buys/sells (>$1M) for a ticker. Returns BULLISH/BEARISH/NEUTRAL verdict + transaction list.',
+      concurrencySafe: true,
+    },
+    // === Analyst Consensus (FREE — Yahoo) ===
+    {
+      name: 'analyst_consensus',
+      tool: analystConsensusTool,
+      description: ANALYST_CONSENSUS_DESCRIPTION,
+      compactDescription: 'Wall Street consensus: strongBuy/buy/hold/sell/strongSell breakdown, mean rating, target prices, recent upgrades/downgrades.',
+      concurrencySafe: true,
+    },
+    // === Fear & Greed Index (FREE — alternative.me) ===
+    {
+      name: 'fear_greed_index',
+      tool: fearGreedTool,
+      description: FEAR_GREED_DESCRIPTION,
+      compactDescription: 'Crypto Fear & Greed Index (0–100). Free, no API key. Use in crypto/memecoin scanners to gauge sentiment.',
+      concurrencySafe: true,
+    },
+    // === Crypto Market Cap (FREE — CoinGecko) ===
+    {
+      name: 'crypto_market_cap',
+      tool: cryptoMarketCapTool,
+      description: CRYPTO_MARKET_CAP_DESCRIPTION,
+      compactDescription: 'Top N cryptos by market cap from CoinGecko (free). Use BEFORE crypto scoring to anchor MCap rank in real data.',
+      concurrencySafe: true,
+    },
+    // === Sector Performance (FREE — Yahoo via 11 GICS ETFs) ===
+    {
+      name: 'sector_performance',
+      tool: sectorPerformanceTool,
+      description: SECTOR_PERFORMANCE_DESCRIPTION,
+      compactDescription: 'Snapshot of 11 S&P GICS sector ETFs + SPY/QQQ/IWM in one call. For macro-radar and sector rotation analysis.',
+      concurrencySafe: true,
+    },
+    // === Economic Calendar (FREE — Trading Economics guest endpoint) ===
+    {
+      name: 'economic_calendar',
+      tool: economicCalendarTool,
+      description: ECONOMIC_CALENDAR_DESCRIPTION,
+      compactDescription: 'Upcoming high-impact macro events (FOMC, CPI, NFP, GDP, PCE) for the next N days. Free.',
+      concurrencySafe: true,
+    },
+    // === RSS Intelligence (FREE — No API key required) ===
+    {
+      name: 'rss_intelligence',
+      tool: rssIntelTool,
+      description: RSS_INTELLIGENCE_DESCRIPTION,
+      compactDescription: 'Scan SEC EDGAR + Google News + GlobeNewsWire RSS feeds for latest news, filings, and press releases about any company or topic (free).',
+      concurrencySafe: true,
+    },
+  );
 
   // Include web_search if Exa, Perplexity, or Tavily API key is configured (Exa → Perplexity → Tavily)
   if (process.env.EXASEARCH_API_KEY) {

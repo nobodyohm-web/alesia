@@ -131,11 +131,13 @@ To press Enter:
 
 /**
  * Ensure browser and page are initialized.
- * Lazily launches a headless Chromium browser on first use.
+ * Lazily launches a Chromium browser on first use. Headless by default; set
+ * `ALESIA_BROWSER_HEADLESS=false` to surface the window for debugging.
  */
 async function ensureBrowser(): Promise<Page> {
   if (!browser) {
-    browser = await chromium.launch({ headless: false });
+    const headless = process.env.ALESIA_BROWSER_HEADLESS !== 'false';
+    browser = await chromium.launch({ headless });
   }
   if (!page) {
     const context = await browser.newContext();
@@ -294,8 +296,13 @@ export const browserTool = new DynamicStructuredTool({
           const context = currentPage.context();
           const newPage = await context.newPage();
           await newPage.goto(url, { timeout: 30000, waitUntil: 'networkidle' });
-          // Switch to the new page
+          // Close the previous page so it can't keep loading in the background
+          // and so we don't leak handles. Best-effort — failure is non-fatal.
+          if (currentPage !== newPage) {
+            await currentPage.close().catch(() => {});
+          }
           page = newPage;
+          currentRefs.clear();
           return formatToolResult({
             ok: true,
             url: newPage.url(),

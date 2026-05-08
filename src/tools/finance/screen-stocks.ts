@@ -136,6 +136,7 @@ export function createScreenStocks(model: string): DynamicStructuredTool {
       }
 
       // Step 2: LLM structured output — translate natural language → filters
+      // Timeout at 20s to avoid blocking the agent loop on slow local models
       onProgress?.('Building screening criteria...');
       let filters: ScreenerFilters;
       try {
@@ -143,17 +144,24 @@ export function createScreenStocks(model: string): DynamicStructuredTool {
           model,
           systemPrompt: buildScreenerPrompt(metrics),
           outputSchema: ScreenerFilterSchema,
+          signal: AbortSignal.timeout(20_000),
         });
         filters = ScreenerFilterSchema.parse(response);
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
         return formatToolResult(
           {
-            error: 'Failed to parse screening criteria',
-            details: error instanceof Error ? error.message : String(error),
+            error: msg.includes('abort') || msg.includes('timeout')
+              ? 'Screener LLM translation timed out (20s). Try a simpler query or use web_search as fallback.'
+              : 'Failed to parse screening criteria',
+            details: msg,
           },
           [],
         );
       }
+
+      // Cap limit to 10 to stay within token budget
+      filters.limit = Math.min(filters.limit, 10);
 
       // Step 3: POST to screener API
       onProgress?.('Screening stocks...');

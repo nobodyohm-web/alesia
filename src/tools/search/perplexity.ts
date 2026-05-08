@@ -38,6 +38,8 @@ async function callPerplexity(query: string): Promise<PerplexityCompletionRespon
       messages: [{ role: 'user' as const, content: query }],
       max_tokens: 4096,
     }),
+    // Hard timeout: the agent loop must never block on a slow vendor.
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {
@@ -53,7 +55,7 @@ export const perplexitySearch = new DynamicStructuredTool({
   description:
     'Search the web for current information on any topic. Returns a grounded, citation-backed answer with source URLs.',
   schema: z.object({
-    query: z.string().describe('The search query to look up on the web'),
+    query: z.string().min(1).describe('The search query to look up on the web'),
   }),
   func: async (input) => {
     try {
@@ -83,7 +85,7 @@ export const perplexitySearch = new DynamicStructuredTool({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`[Perplexity API] error: ${message}`);
-      throw new Error(`[Perplexity API] ${message}`);
+      return formatToolResult({ error: `[Perplexity API] ${message}`, query: input.query }, []);
     }
   },
 });

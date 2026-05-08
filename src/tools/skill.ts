@@ -67,6 +67,44 @@ export const skillTool = new DynamicStructuredTool({
       },
     );
 
+    // Build a forceful preamble that smaller models (gemma4, llama) can't ignore
+    result += `═══════════════════════════════════════════════════════════\n`;
+    result += `⚠️ MANDATORY EXECUTION PROTOCOL — READ BEFORE DOING ANYTHING\n`;
+    result += `═══════════════════════════════════════════════════════════\n\n`;
+
+    if (skillDef.name === 'master-analysis') {
+      result += `STEP 1: Call these tools IN THIS EXACT ORDER:\n`;
+      result += `  1. yahoo_summary(ticker="${args || '[TICKER]'}")\n`;
+      result += `  2. yahoo_historical(ticker="${args || '[TICKER]'}", period="1y", interval="1d")\n`;
+      result += `  3. rss_intelligence(query="${args || '[TICKER]'}", mode="company")\n`;
+      result += `  4. read_filings(ticker="${args || '[TICKER]'}") — if error, use web_search("[TICKER] 10-K risk factors")\n\n`;
+      result += `STEP 2: After ALL 4 tools, generate the report using THIS EXACT FORMAT:\n\n`;
+      result += `╔═══════════════════════════════════════════════════════════╗\n`;
+      result += `║  RAPPORT D'ANALYSE — [COMPANY] ([TICKER])                 ║\n`;
+      result += `║  Date : [today]                                            ║\n`;
+      result += `║  Profil : 🚀/📈/🏛️ [STARTUP/CROISSANCE/MATURE]           ║\n`;
+      result += `║  Score : XX/100 — ⭐⭐⭐⭐                                 ║\n`;
+      result += `║  Verdict : 🟢 ACHETER / 🟡 ATTENDRE / 🔴 ÉVITER          ║\n`;
+      result += `╚═══════════════════════════════════════════════════════════╝\n\n`;
+      result += `Then include these 7 sections IN ORDER:\n`;
+      result += `  🔍 PROFIL — maturity classification with justification\n`;
+      result += `  📊 1. FINANCIERS CLÉS — 3-year table (Revenue, Margins, FCF, EPS)\n`;
+      result += `  📡 2. VEILLE TEMPS RÉEL — Top RSS items + sentiment score\n`;
+      result += `  ⚠️ 3. RISQUE MAJEUR (SEC) — #1 risk from filings\n`;
+      result += `  🧬 4. SCORING ADAPTATIF (XX/100) — Factor-by-factor scoring with chain-of-thought\n`;
+      result += `  ⚖️ 5. VALORISATION — DCF or P/S adapted to maturity\n`;
+      result += `  💰 6. PRIX D'ENTRÉE (Trade Republic 🇪🇺) — USD + EUR prices\n`;
+      result += `  📌 7. CONCLUSION — Why buy/avoid, catalysts, 1-year backtest\n\n`;
+      result += `Stars: 80-100=⭐⭐⭐⭐⭐ PÉPITE | 65-79=⭐⭐⭐⭐ SOLIDE | 50-64=⭐⭐⭐ CORRECT | 35-49=⭐⭐ FRAGILE | 0-34=⭐ DANGER\n\n`;
+      result += `FORBIDDEN: Do NOT use a different format. Do NOT skip the ╔═══ header. Do NOT skip the Score or Stars.\n\n`;
+    } else {
+      result += `- Execute ALL phases below IN ORDER. Do NOT skip any phase.\n`;
+      result += `- Call EVERY tool specified in each phase. Do NOT stop after the first tool call.\n`;
+      result += `- Do NOT ask the user for confirmation or "how to proceed". Execute autonomously.\n`;
+      result += `- Output MUST follow the exact OUTPUT template at the end. No freestyle.\n`;
+      result += `- Language: FRENCH (mandatory).\n\n`;
+    }
+
     result += resolved;
 
     return result;

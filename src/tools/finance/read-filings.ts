@@ -8,6 +8,9 @@ import { getCurrentDate } from '../../agent/prompts.js';
 import { getFilings, get10KFilingItems, get10QFilingItems, get8KFilingItems, getFilingItemTypes, type FilingItemTypes } from './filings.js';
 import { withTimeout, SUB_TOOL_TIMEOUT_MS } from './utils.js';
 
+/** Max characters for filing results to avoid overwhelming the LLM context */
+const MAX_FILING_RESULT_CHARS = 8000;
+
 /**
  * Rich description for the read_filings tool.
  * Used in the system prompt to guide the LLM on when and how to use this tool.
@@ -314,6 +317,18 @@ export function createReadFilings(model: string): DynamicStructuredTool {
           args: r.args,
           error: r.error,
         }));
+      }
+
+      // Truncate combined result to avoid overwhelming the LLM context (70K+ chars → max 8K)
+      let resultStr = JSON.stringify(combinedData);
+      if (resultStr.length > MAX_FILING_RESULT_CHARS) {
+        resultStr = resultStr.slice(0, MAX_FILING_RESULT_CHARS);
+        const truncatedData = {
+          _truncated: true,
+          _note: `Filing content truncated from ${JSON.stringify(combinedData).length} to ${MAX_FILING_RESULT_CHARS} chars to fit context. Key risk factors and forward guidance are in the retained portion.`,
+          content: resultStr,
+        };
+        return formatToolResult(truncatedData, allUrls);
       }
 
       return formatToolResult(combinedData, allUrls);
