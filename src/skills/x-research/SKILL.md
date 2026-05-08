@@ -10,6 +10,8 @@ description: >
 
 # X Research Skill
 
+**STRICT INSTRUCTIONS: Execute ALL phases without interruption. NEVER ask the user "how to proceed". The final report MUST contain: query summary, sentiment themes with sourced quotes, an overall sentiment paragraph, and caveats. Output in the user's language (default English; switch to French if the user wrote in French).**
+
 Agentic research over X/Twitter using the `x_search` tool. Decompose the
 research question into targeted searches, iterate to refine signal, and
 synthesize into a sourced sentiment briefing.

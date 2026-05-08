@@ -5,6 +5,8 @@ description: Performs discounted cash flow (DCF) valuation analysis to estimate 
 
 # DCF Valuation Skill
 
+**INSTRUCTIONS STRICTES : Exécute TOUTES les étapes (1→8) sans interruption. Ne demande JAMAIS à l'utilisateur "comment procéder". Appelle TOUS les outils listés. Le rapport final DOIT inclure : valeur intrinsèque par action, upside/downside vs prix actuel, matrice de sensibilité 3×3, et caveats. Langue : FRANÇAIS sauf si l'utilisateur écrit en anglais.**
+
 ## Workflow Checklist
 
 Copy and track progress:
@@ -22,60 +24,52 @@ DCF Analysis Progress:
 
 ## Step 1: Gather Financial Data
 
-Call the `get_financials` tool with these queries:
+**Primary path (FREE, preferred):** Call `yahoo_summary` once with `ticker=[TICKER]`. It returns
+`price`, `summaryDetail`, `keyStatistics`, `financialData`, `annualFinancials` (4y), and
+`quarterlyFinancials` (last 4 quarters) in a single batched call.
 
-### 1.1 Cash Flow History
-**Query:** `"[TICKER] annual cash flow statements for the last 5 years"`
+Then call `analyst_consensus` with `ticker=[TICKER]` to pull target prices and analyst count
+for cross-validation.
 
-**Extract:** `free_cash_flow`, `net_cash_flow_from_operations`, `capital_expenditure`
+**Fallback path:** if `yahoo_summary` returns insufficient data, call `get_financials` with the
+natural-language query `"[TICKER] annual cash flow + balance sheet + market cap, last 5 years"`
+(it handles multi-statement queries internally — do NOT split into multiple calls).
 
-**Fallback:** If `free_cash_flow` missing, calculate: `net_cash_flow_from_operations - capital_expenditure`
+### Fields to extract
 
-### 1.2 Financial Metrics
-**Query:** `"[TICKER] financial metrics snapshot"`
+From `yahoo_summary.financialData`: `freeCashflow`, `operatingCashflow`, `currentPrice`,
+`returnOnEquity`, `debtToEquity`, `revenueGrowth`, `marketCap`, `enterpriseValue`.
 
-**Extract:** `market_cap`, `enterprise_value`, `free_cash_flow_growth`, `revenue_growth`, `return_on_invested_capital`, `debt_to_equity`, `free_cash_flow_per_share`
+From `yahoo_summary.keyStatistics`: `sharesOutstanding`, `enterpriseToEbitda`, `priceToBook`,
+`forwardPE`, `pegRatio`, `enterpriseValue`, `floatShares`.
 
-### 1.3 Balance Sheet
-**Query:** `"[TICKER] latest balance sheet"`
+From `yahoo_summary.annualFinancials` (last 4 years, sorted oldest→newest): `freeCashFlow`,
+`operatingCashFlow`, `capitalExpenditure`, `totalRevenue`, `netIncome`. Use these to compute
+the 4-year FCF CAGR.
 
-**Extract:** `total_debt`, `cash_and_equivalents`, `current_investments`, `outstanding_shares`
+**Fallback** if `freeCashFlow` missing on an entry: compute it as
+`operatingCashFlow − capitalExpenditure`.
 
-**Fallback:** If `current_investments` missing, use 0
+From `analyst_consensus`: `priceTargets.mean`, `priceTargets.upsidePct`,
+`priceTargets.numberOfAnalysts`. Use as a sanity check on the DCF output.
 
-### 1.4 Analyst Estimates
-**Query:** `"[TICKER] analyst estimates"`
+### Sector WACC
 
-**Extract:** `earnings_per_share` (forward estimates by fiscal year)
-
-**Use:** Calculate implied EPS growth rate for cross-validation
-
-### 1.5 Current Price
-Call the `get_market_data` tool:
-
-**Query:** `"[TICKER] price snapshot"`
-
-**Extract:** `price`
-
-### 1.6 Company Facts
-Call the `get_financials` tool:
-
-**Query:** `"[TICKER] company facts"`
-
-**Extract:** `sector`, `industry`, `market_cap`
-
-**Use:** Determine appropriate WACC range from [sector-wacc.md](sector-wacc.md)
+Pull `sector` from `yahoo_summary.summaryDetail.industry` (or fallback `web_search "[TICKER] sector industry"`).
+Use the `sector` to select the appropriate base WACC range from [sector-wacc.md](sector-wacc.md).
 
 ## Step 2: Calculate FCF Growth Rate
 
-Calculate 5-year FCF CAGR from cash flow history.
+Calculate FCF CAGR from the `annualFinancials` cash-flow history (typically 3–4 years).
 
-**Cross-validate with:** `free_cash_flow_growth` (YoY), `revenue_growth`, analyst EPS growth
+**Cross-validate with:** `revenueGrowth` from `financialData`, and analyst forward-EPS growth
+implied by `priceTargets.mean / currentPrice`.
 
 **Growth rate selection:**
-- Stable FCF history → Use CAGR with 10-20% haircut
-- Volatile FCF → Weight analyst estimates more heavily
+- Stable FCF history → Use CAGR with 10–20% haircut
+- Volatile FCF (one or more negative years) → Weight `revenueGrowth` more heavily, halve the CAGR
 - **Cap at 15%** (sustained higher growth is rare)
+- **Floor at 0%** for cash-burning companies — DCF is not appropriate; flag this in caveats and use a P/Sales heuristic instead
 
 ## Step 3: Estimate Discount Rate (WACC)
 
@@ -86,9 +80,10 @@ Calculate 5-year FCF CAGR from cash flow history.
 - Equity risk premium: 5-6%
 - Cost of debt: 5-6% pre-tax (~4% after-tax at 30% tax rate)
 
-Calculate WACC using `debt_to_equity` for capital structure weights.
+Calculate WACC using `debtToEquity` (from `financialData`) for capital structure weights. If
+missing, default to a sector-typical 70% equity / 30% debt mix.
 
-**Reasonableness check:** WACC should be 2-4% below `return_on_invested_capital` for value-creating companies.
+**Reasonableness check:** WACC should be 2-4% below `returnOnEquity` for value-creating companies.
 
 **Sector adjustments:** Apply adjustment factors from [sector-wacc.md](sector-wacc.md) based on company-specific characteristics.
 
@@ -100,7 +95,7 @@ Calculate WACC using `debt_to_equity` for capital structure weights.
 
 ## Step 5: Calculate Present Value
 
-Discount all FCFs → sum for Enterprise Value → subtract Net Debt → divide by `outstanding_shares` for fair value per share.
+Discount all FCFs → sum for Enterprise Value → subtract Net Debt (from `totalDebt − cashAndCashEquivalents`) → divide by `sharesOutstanding` for fair value per share.
 
 ## Step 6: Sensitivity Analysis
 
@@ -110,14 +105,16 @@ Create 3×3 matrix: WACC (base ±1%) vs terminal growth (2.0%, 2.5%, 3.0%).
 
 Before presenting, verify these sanity checks:
 
-1. **EV comparison**: Calculated EV should be within 30% of reported `enterprise_value`
+1. **EV comparison**: Calculated EV should be within 30% of reported `enterpriseValue` (from `keyStatistics`)
    - If off by >30%, revisit WACC or growth assumptions
 
 2. **Terminal value ratio**: Terminal value should be 50-80% of total EV for mature companies
    - If >90%, growth rate may be too high
    - If <40%, near-term projections may be aggressive
 
-3. **Per-share cross-check**: Compare to `free_cash_flow_per_share × 15-25` as rough sanity check
+3. **Per-share cross-check**: Compare to `(freeCashflow / sharesOutstanding) × 15-25` as rough sanity check
+
+4. **Analyst cross-check**: If `analyst_consensus.priceTargets.mean` differs from your DCF by >35%, surface the discrepancy in the caveats and explain the most likely driver (different growth assumption, different WACC, etc.)
 
 If validation fails, reconsider assumptions before presenting results.
 
