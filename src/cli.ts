@@ -49,6 +49,17 @@ function truncateAtWord(str: string, maxLength: number): string {
   return `${str.slice(0, maxLength)}...`;
 }
 
+/**
+ * When the master-analysis skill is active, map each phase tool to its label.
+ * The CLI emits "Phase X/7 — Label ✓" after the corresponding tool_end event.
+ */
+const MASTER_ANALYSIS_PHASES: Record<string, string> = {
+  yahoo_summary: 'Phase 1/7 — Data ✓',
+  yahoo_historical: 'Phase 1/7 — Historique ✓',
+  rss_intelligence: 'Phase 3/7 — News ✓',
+  read_filings: 'Phase 4/7 — SEC ✓',
+};
+
 function summarizeToolResult(tool: string, args: Record<string, unknown>, result: string): string {
   if (tool === 'skill') {
     const skillName = args.skill as string;
@@ -101,11 +112,13 @@ function createScreen(
 
 /**
  * Render a single display event into the chat log (used by incremental history).
+ * `masterAnalysisActive` is set by the caller and toggles per-tool phase labels.
  */
 function renderEvent(
   chatLog: ChatLogComponent,
   display: { event: any; id: string; completed?: boolean; endEvent?: any; progressMessage?: string },
   itemStatus: string,
+  masterAnalysisActive: boolean = false,
 ) {
   const event = display.event;
 
@@ -128,6 +141,12 @@ function renderEvent(
         summarizeToolResult(done.tool, toolStart.args, done.result),
         done.duration,
       );
+      if (masterAnalysisActive) {
+        const phaseLabel = MASTER_ANALYSIS_PHASES[done.tool];
+        if (phaseLabel) {
+          chatLog.addChild(new Text(theme.muted(phaseLabel), 0, 0));
+        }
+      }
     } else if (display.completed && display.endEvent?.type === 'tool_error') {
       const toolError = display.endEvent as ToolErrorEvent;
       component.setError(toolError.error);
@@ -195,10 +214,11 @@ export async function runCli() {
   let lastRenderedStatus = '';
   let lastRenderedAnswer = false;
   let lastRenderedQueryId: string | null = null;
+  let masterAnalysisActive = false;
   const finalizedToolIds = new Set<string>();
 
   agentRunner = new AgentRunnerController(
-    { model: modelSelection.model, modelProvider: modelSelection.provider, maxIterations: 10 },
+    { model: modelSelection.model, modelProvider: modelSelection.provider, maxIterations: 30 },
     modelSelection.inMemoryChatHistory,
     () => {
       // Incremental history update — only render new events
@@ -210,11 +230,21 @@ export async function runCli() {
           chatLog.addQuery(lastItem.query);
           chatLog.resetToolGrouping();
           lastRenderedQueryId = lastItem.id;
+          masterAnalysisActive = false;
         }
 
-        // Render new events only
+        // Render new events only — track master-analysis activation so phase
+        // labels render after each subsequent tool_end.
         for (let i = lastRenderedEventCount; i < lastItem.events.length; i++) {
-          renderEvent(chatLog, lastItem.events[i], lastItem.status);
+          const display = lastItem.events[i];
+          if (
+            display.event.type === 'tool_start' &&
+            display.event.tool === 'skill' &&
+            (display.event.args as Record<string, unknown>)?.skill === 'master-analysis'
+          ) {
+            masterAnalysisActive = true;
+          }
+          renderEvent(chatLog, display, lastItem.status, masterAnalysisActive);
         }
         lastRenderedEventCount = lastItem.events.length;
 
@@ -229,6 +259,12 @@ export async function runCli() {
                   summarizeToolResult(display.endEvent.tool, display.event.args, display.endEvent.result),
                   display.endEvent.duration,
                 );
+                if (masterAnalysisActive) {
+                  const phaseLabel = MASTER_ANALYSIS_PHASES[display.endEvent.tool];
+                  if (phaseLabel) {
+                    chatLog.addChild(new Text(theme.muted(phaseLabel), 0, 0));
+                  }
+                }
               } else if (display.endEvent.type === 'tool_error') {
                 component.setError(display.endEvent.error);
               }
@@ -309,7 +345,7 @@ export async function runCli() {
 
   const HELP_TEXT = `Keyboard Shortcuts
   esc          Interrupt query / clear input
-  ctrl+c       Exit Dexter
+  ctrl+c       Exit Alesia
   /model       Switch LLM provider and model
   /rules       Show research rules
   /clear       Clear conversation
@@ -317,21 +353,55 @@ export async function runCli() {
 
   const handleSlashCommand = async (command: string) => {
     switch (command) {
+      case 'search':
+        // Clear context for fresh scan
+        modelSelection.inMemoryChatHistory.clear();
+        agentRunner.clearHistory();
+        await agentRunner.runQuery('Lance le scanner d\'opportunités actions. Trouve les meilleures actions à fort potentiel pour aujourd\'hui.');
+        break;
+      case 'crypto':
+        modelSelection.inMemoryChatHistory.clear();
+        agentRunner.clearHistory();
+        await agentRunner.runQuery('Lance le scanner crypto. Trouve les meilleures opportunités crypto pour aujourd\'hui.');
+        break;
+      case 'memecoin':
+        modelSelection.inMemoryChatHistory.clear();
+        agentRunner.clearHistory();
+        await agentRunner.runQuery('Lance le scanner memecoin. Trouve les meilleurs memecoins moonshot pour aujourd\'hui.');
+        break;
+      case 'macro':
+        modelSelection.inMemoryChatHistory.clear();
+        agentRunner.clearHistory();
+        await agentRunner.runQuery('Lance le macro radar. Donne-moi un snapshot complet de l\'état macro actuel.');
+        break;
+      case 'ipo':
+        modelSelection.inMemoryChatHistory.clear();
+        agentRunner.clearHistory();
+        await agentRunner.runQuery('Lance le scanner IPO. Trouve les IPOs les plus prometteuses à venir.');
+        break;
+      case 'fear':
+        await agentRunner.runQuery('Quel est l\'indice Fear & Greed crypto actuel ? Inclus la tendance sur 7 jours.');
+        break;
+      case 'sentiment':
+        await agentRunner.runQuery('Lance le skill news-sentiment. Demande-moi sur quel ticker ou thème en une ligne, puis exécute.');
+        break;
       case 'model':
         modelSelection.startSelection();
         break;
       case 'rules':
-        await agentRunner.runQuery('Show me my current research rules from .dexter/RULES.md');
+        await agentRunner.runQuery('Show me my current research rules from .alesia/RULES.md');
         break;
       case 'clear':
         chatLog.clearAll();
+        modelSelection.inMemoryChatHistory.clear();
+        agentRunner.clearHistory();
         tui.requestRender();
         break;
       case 'memory':
         await agentRunner.runQuery('Show me what you know about me from memory. Use memory_search and memory_get.');
         break;
       case 'heartbeat':
-        await agentRunner.runQuery('Show me my current heartbeat checklist from .dexter/HEARTBEAT.md');
+        await agentRunner.runQuery('Show me my current heartbeat checklist from .alesia/HEARTBEAT.md');
         break;
       case 'history': {
         const messages = modelSelection.inMemoryChatHistory.getMessages();
@@ -399,6 +469,22 @@ export async function runCli() {
     lastRenderedStatus = '';
     lastRenderedAnswer = false;
     finalizedToolIds.clear();
+
+    // Auto-clear LLM context before each new analysis to prevent context pollution.
+    // Fresh analysis queries (tickers, skill triggers) get a clean context so the LLM
+    // follows the SKILL.md format precisely instead of being influenced by prior turns.
+    const trimmed = query.trim();
+    const isFreshAnalysis =
+      /^[A-Z]{1,5}$/.test(trimmed) ||                                  // Single ticker: FLY, AAPL, BTC
+      /^(IPO|macro|marché|marche|fed|taux|inflation|vix|portfolio|compare|vs |versus)/i.test(trimmed) || // Skill triggers
+      /^(dividende|dividend|yield|earnings|résultats|fear and greed|fear & greed|peur cupidité|sentiment|buzz)/i.test(trimmed) || // More triggers
+      /^(scanner|search|opportunit|memecoin|meme coin|degen|moonshot|crypto scanner|best stocks|best crypto)/i.test(trimmed) || // Scanner triggers
+      /^[A-Z]{1,5}(\s*,\s*[A-Z]{1,5})+$/.test(trimmed);                // Ticker list: FLY,AAPL,BTC
+    if (isFreshAnalysis) {
+      modelSelection.inMemoryChatHistory.clear();
+      agentRunner.clearHistory();
+    }
+
     const result = await agentRunner.runQuery(query);
     if (result?.answer) {
       await inputHistory.updateAgentResponse(result.answer);
