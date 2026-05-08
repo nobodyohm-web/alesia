@@ -1,11 +1,11 @@
 {
-  "name": "dexter-ts",
+  "name": "alesia",
   "version": "2026.5.1",
-  "description": "Dexter - AI agent for deep financial research.",
+  "description": "Alesia - AI agent for deep financial research.",
   "type": "module",
   "main": "src/index.tsx",
   "bin": {
-    "dexter-ts": "./src/index.tsx"
+    "alesia": "./src/index.tsx"
   },
   "scripts": {
     "start": "bun run src/index.tsx",
@@ -29,15 +29,18 @@
     "@mozilla/readability": "^0.6.0",
     "@whiskeysockets/baileys": "7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",
+    "binance": "^3.5.7",
     "croner": "^9.1.0",
     "diff": "^8.0.4",
     "dotenv": "^17.3.1",
     "exa-js": "^2.10.1",
+    "fast-xml-parser": "^5.7.2",
     "gray-matter": "^4.0.3",
     "langsmith": "^0.4.12",
     "linkedom": "^0.18.12",
     "playwright": "^1.58.2",
     "qrcode-terminal": "^0.12.0",
+    "yahoo-finance2": "^3.14.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
