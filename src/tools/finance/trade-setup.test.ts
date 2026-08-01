@@ -3,6 +3,7 @@ import { buildLevels, chooseStrategy, scoreConfidence, tradeSetupTool } from './
 import { analyzeTimeframe } from './market-read.js';
 import { HORIZONS, HORIZON_DOCTRINE, type Horizon } from './horizons.js';
 import { DEFAULT_THRESHOLDS } from './thresholds.js';
+import { calibrationFor, DAY_BREAKEVEN_COST_BP } from './calibration.js';
 import { aggregateCandles, dropDuplicateWeeklyBar, resolveSymbol } from './candles.js';
 import type { Candle } from './indicators.js';
 
@@ -410,5 +411,47 @@ describe('extension guard', () => {
       stretchedAtr: 999,
     });
     expect(loose.strategy).not.toBe('none');
+  });
+});
+
+describe('day-horizon calibration warning', () => {
+  // The measurement that produced this: 13,263 backtested day trades whose
+  // gross edge (+0.0257R) is exhausted by a 1.33bp round trip. The cheapest
+  // realistic fee is 8bp. Costs are ~6x the edge, so the warning must lead
+  // rather than sit beneath a plausible-looking entry price.
+  test('the day verdict opens with a refusal, not a caveat', () => {
+    const { verdict } = calibrationFor('day', 'trend-pullback');
+    expect(verdict.startsWith('DO NOT TRADE THIS AS SHOWN')).toBe(true);
+  });
+
+  test('it quotes the break-even cost and the real fee tiers', () => {
+    const { verdict } = calibrationFor('day', 'breakout');
+    expect(verdict).toContain(String(DAY_BREAKEVEN_COST_BP));
+    expect(verdict).toContain('8bp');
+    expect(verdict).toContain('20bp');
+  });
+
+  test('every measured day strategy is loss-making net of costs', () => {
+    for (const strategy of ['trend-pullback', 'breakout', 'range-reversion']) {
+      const { measured } = calibrationFor('day', strategy);
+      expect(measured).not.toBeNull();
+      if (measured) {
+        expect(measured.expectancyR).toBeLessThan(0);
+        // Entirely below zero, not merely negative on a point estimate.
+        expect(measured.ci95[1]).toBeLessThan(0);
+      }
+    }
+  });
+
+  test('horizons without a refusal still report their interval honestly', () => {
+    const { verdict } = calibrationFor('swing', 'trend-pullback');
+    expect(verdict.startsWith('DO NOT TRADE')).toBe(false);
+    expect(verdict).toContain('NO edge has been demonstrated');
+  });
+
+  test('an unmeasured horizon says so instead of inventing a number', () => {
+    const { verdict, measured } = calibrationFor('long', 'reversal');
+    expect(measured).toBeNull();
+    expect(verdict).toContain('backtested trades');
   });
 });

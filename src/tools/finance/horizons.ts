@@ -113,7 +113,7 @@ export const HORIZONS: Record<Horizon, HorizonSpec> = {
  * reason to buy a business it has not valued.
  */
 export const HORIZON_DOCTRINE: Record<Horizon, string> = {
-  day: 'Pure technicals and flow. Fundamentals are irrelevant at this horizon except as a scheduled-event risk (earnings, FOMC, CPI) to avoid holding through.',
+  day: 'MEASURED AND FOUND UNPROFITABLE as implemented: over 13,263 backtested trades the setup logic has a real but tiny gross edge (+0.0257R) that is exhausted by a 1.33bp round-trip cost, against a cheapest realistic fee of 8bp. Read this horizon for market structure, do not trade it. Beyond that: pure technicals and flow, with scheduled events (FOMC, CPI) as the risk to avoid holding through.',
   swing: 'Technicals lead, catalysts matter. Check the earnings date before entering — an earnings gap can jump straight through a stop.',
   medium: 'Technicals time the entry, fundamentals justify it. A medium-term position in a deteriorating business is a slow loss dressed as patience.',
   long: 'Fundamentals decide, technicals only time. Never take a long-term position on a chart signal alone: valuation and business quality come first, and the chart merely improves the price paid.',

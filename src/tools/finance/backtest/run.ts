@@ -28,17 +28,38 @@ interface Dataset {
   series: Record<Horizon, { entry: Candle[]; structure: Candle[]; trend: Candle[] } | null>;
 }
 
-async function loadCrypto(symbol: string): Promise<Dataset> {
+/**
+ * How far back to pull 5-minute bars.
+ *
+ * Two years rather than the full 2017 history: that is ~210k bars per symbol,
+ * and intraday microstructure — fee tiers, maker/taker mix, who is providing
+ * liquidity — has changed enough since 2017 that older 5m data would answer a
+ * question about a market that no longer exists. Deliberately narrower than the
+ * swing sample, and the smaller n is reported as such.
+ */
+const DAY_LOOKBACK_MS = 2 * 365 * 24 * 60 * 60 * 1000;
+
+async function loadCrypto(symbol: string, withIntraday: boolean): Promise<Dataset> {
   const h1 = await fetchBinanceHistory(symbol, '1h', SINCE);
   const d1 = await fetchBinanceHistory(symbol, '1d', SINCE);
   const w1 = await fetchBinanceHistory(symbol, '1wk', SINCE);
   const h4 = resample(h1, 4, false); // crypto trades 24/7 — no session reset
 
+  let dayseries: Dataset['series']['day'] = null;
+  if (withIntraday) {
+    const since = Date.now() - DAY_LOOKBACK_MS;
+    const m5 = await fetchBinanceHistory(symbol, '5m', since, 400);
+    const m15 = await fetchBinanceHistory(symbol, '15m', since, 200);
+    if (m5.length > 5000 && m15.length > 1000) {
+      dayseries = { entry: m5, structure: m15, trend: h1 };
+    }
+  }
+
   return {
     symbol,
     market: 'crypto',
     series: {
-      day: null, // 5m history is a separate, much larger fetch
+      day: dayseries,
       swing: h1.length > 500 ? { entry: h1, structure: h4, trend: d1 } : null,
       medium: d1.length > 300 ? { entry: d1, structure: d1, trend: w1 } : null,
       long: d1.length > 300 && w1.length > 100 ? { entry: d1, structure: w1, trend: w1 } : null,
@@ -68,7 +89,9 @@ function costFor(market: 'crypto' | 'equity', horizon: Horizon): number {
 }
 
 function holdFor(horizon: Horizon): number {
-  return horizon === 'swing' ? 120 : horizon === 'medium' ? 60 : 52;
+  // 48 five-minute bars is four hours — the outer edge of "minutes to hours,
+  // flat by the close" that the day horizon promises.
+  return horizon === 'day' ? 48 : horizon === 'swing' ? 120 : horizon === 'medium' ? 60 : 52;
 }
 
 function report(label: string, trades: SimTrade[]): void {
@@ -97,10 +120,11 @@ function report(label: string, trades: SimTrade[]): void {
  * Daily and weekly series are cheap enough to walk in full.
  */
 function stepFor(market: 'crypto' | 'equity', horizon: Horizon): number {
+  if (horizon === 'day') return 3;
   return market === 'crypto' && horizon === 'swing' ? 3 : 1;
 }
 
-function runAll(datasets: Dataset[], horizon: Horizon, thresholds: Thresholds): SimTrade[] {
+function runAll(datasets: Dataset[], horizon: Horizon, thresholds: Thresholds, costOverride?: number): SimTrade[] {
   const all: SimTrade[] = [];
   for (const ds of datasets) {
     const series = ds.series[horizon];
@@ -108,7 +132,7 @@ function runAll(datasets: Dataset[], horizon: Horizon, thresholds: Thresholds): 
     all.push(
       ...backtestSymbol(ds.symbol, series, horizon, {
         thresholds,
-        costFraction: costFor(ds.market, horizon),
+        costFraction: costOverride ?? costFor(ds.market, horizon),
         maxHoldBars: holdFor(horizon),
         windowBars: 260,
         step: stepFor(ds.market, horizon),
@@ -130,13 +154,14 @@ const SPLIT_DATE = '2023-06-01T00:00:00.000Z';
 
 async function main(): Promise<void> {
   const mode = process.argv[2] ?? 'baseline';
+  const universe = mode === 'day' ? CRYPTO.slice(0, 4) : CRYPTO;
   console.log('Loading history (cached after the first run)...');
 
   const datasets: Dataset[] = [];
-  for (const s of CRYPTO) {
-    try { datasets.push(await loadCrypto(s)); } catch (e) { console.log(`  ${s}: ${(e as Error).message}`); }
+  for (const s of universe) {
+    try { datasets.push(await loadCrypto(s, mode === 'day')); } catch (e) { console.log(`  ${s}: ${(e as Error).message}`); }
   }
-  for (const s of EQUITY) {
+  for (const s of mode === 'day' ? [] : EQUITY) {
     try { datasets.push(await loadEquity(s)); } catch (e) { console.log(`  ${s}: ${(e as Error).message}`); }
   }
 
@@ -145,6 +170,38 @@ async function main(): Promise<void> {
   console.log(`Loaded ${crypto.length} crypto, ${equity.length} equity symbols\n`);
 
   const horizons: Horizon[] = ['swing', 'medium', 'long'];
+
+  if (mode === 'day') {
+    console.log('=== DAY HORIZON (1h bias / 15m structure / 5m trigger) ===');
+    console.log('  * = CI entirely above zero   ! = CI entirely below zero\n');
+
+    // Cost sensitivity IS the analysis at this horizon. A day-trade edge is
+    // small and repeated, so the question is never "is there a signal" but
+    // "does the signal survive the round trip". Reported gross first, then at
+    // three real fee tiers, so the break-even cost is visible.
+    const tiers: Array<[string, number]> = [
+      ['gross (no costs)', 0],
+      ['futures VIP, 8bp', 0.0008],
+      ['spot with BNB, 15bp', 0.0015],
+      ['spot taker, 20bp', 0.002],
+    ];
+    for (const [label, cost] of tiers) {
+      report(label, runAll(crypto, 'day', DEFAULT_THRESHOLDS, cost));
+    }
+
+    console.log('');
+    const atRealCost = runAll(crypto, 'day', DEFAULT_THRESHOLDS, 0.0015);
+    for (const strat of ['trend-pullback', 'breakout', 'range-reversion']) {
+      const sub = atRealCost.filter((t) => t.strategy === strat);
+      if (sub.length >= 30) report(`  └ ${strat} @15bp`, sub);
+    }
+
+    console.log('');
+    const { train, test } = splitByDate(atRealCost, SPLIT_DATE);
+    report('  train (< 2023-06) @15bp', train);
+    report('  test  (>= 2023-06) @15bp', test);
+    return;
+  }
 
   if (mode === 'baseline') {
     console.log('=== BASELINE (default thresholds) ===');

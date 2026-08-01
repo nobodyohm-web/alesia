@@ -36,9 +36,53 @@ export interface CalibrationRecord {
 
 const NO_EDGE = 'Confidence interval spans zero — no edge demonstrated on this sample.';
 
+/**
+ * Round-trip cost, as a fraction of notional, at which the day horizon breaks
+ * even. Derived from the measured cost sensitivity, which is exactly linear:
+ *
+ *   gross  +0.0257R      8bp -> -0.1292R      15bp -> -0.2648R      20bp -> -0.3616R
+ *
+ * That gives cost_in_R = 193.6 x costFraction (predicted -0.265 and -0.361 at
+ * 15 and 20bp against -0.2648 and -0.3616 observed), so the gross edge of
+ * 0.0257R is exhausted at a costFraction of 0.0257 / 193.6.
+ */
+export const DAY_BREAKEVEN_COST_BP = 1.33;
+
 export const CALIBRATION: Partial<
   Record<Horizon, { overall: CalibrationRecord; byStrategy: Record<string, CalibrationRecord> }>
 > = {
+  day: {
+    overall: {
+      n: 13263,
+      // Reported GROSS on purpose: net of any real fee it is decisively
+      // negative, and the gross figure is what makes the diagnosis precise —
+      // there IS a signal, it is simply far too small to pay for the trip.
+      expectancyR: 0.0257,
+      ci95: [0.005, 0.048],
+      winRate: 42.9,
+      basis:
+        'GROSS of costs, 4 Binance pairs, 2 years of 5-minute bars. The gross edge is statistically real, ' +
+        `but it dies at ${DAY_BREAKEVEN_COST_BP}bp round trip — roughly 0.66bp per side, below any retail fee anywhere. ` +
+        'Net: -0.129R at 8bp (futures VIP), -0.265R at 15bp, -0.362R at 20bp (spot taker), every one of them ' +
+        'with a confidence interval entirely below zero. No strategy escapes: trend-pullback -0.245R, ' +
+        'breakout -0.184R, range-reversion -0.327R at 15bp. ' +
+        'Caveat: the 5m sample spans only 2 years, so no out-of-sample split was possible on this horizon.',
+    },
+    byStrategy: {
+      'trend-pullback': {
+        n: 7412, expectancyR: -0.2454, ci95: [-0.278, -0.212], winRate: 38.9,
+        basis: 'Net of 15bp. Significantly loss-making.',
+      },
+      breakout: {
+        n: 1537, expectancyR: -0.1843, ci95: [-0.233, -0.132], winRate: 38.4,
+        basis: 'Net of 15bp. The least bad, still significantly loss-making.',
+      },
+      'range-reversion': {
+        n: 4314, expectancyR: -0.3267, ci95: [-0.37, -0.285], winRate: 35.1,
+        basis: 'Net of 15bp. The worst of the three.',
+      },
+    },
+  },
   swing: {
     overall: {
       n: 3806,
@@ -114,6 +158,23 @@ export function calibrationFor(horizon: Horizon, strategy: string): {
       measured: null,
       horizonMeasured: null,
       verdict: `No backtest exists for the ${horizon} horizon — its thresholds are conventions, and the confidence score is descriptive only.`,
+    };
+  }
+
+  // The day horizon is not "unproven", it is disproven, and the warning has to
+  // lead rather than sit under a plausible-looking entry price.
+  if (horizon === 'day') {
+    const day = entry.overall;
+    return {
+      measured: entry.byStrategy[strategy] ?? null,
+      horizonMeasured: day,
+      verdict:
+        `DO NOT TRADE THIS AS SHOWN. Measured over ${day.n} backtested day trades: the setup logic has a real but ` +
+        `tiny gross edge (+${day.expectancyR}R), which is exhausted by a round-trip cost of just ` +
+        `${DAY_BREAKEVEN_COST_BP}bp. Net of the cheapest realistic fee (8bp) it loses 0.129R per trade, and at a ` +
+        `spot taker fee (20bp) it loses 0.362R — every tier with a confidence interval entirely below zero. ` +
+        `Costs are roughly six times the edge. Treat this output as market structure to read, never as a trade to take, ` +
+        `unless you execute at maker fees near zero AND have re-measured it yourself.`,
     };
   }
 
