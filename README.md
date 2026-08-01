@@ -20,7 +20,7 @@ This matters more than a badge, so it goes first.
 | Layer | Author | What it is |
 |---|---|---|
 | Agent core — CLI, agent loop, planning, memory, evals, WhatsApp gateway, provider plumbing | [virattt/alesia](https://github.com/virattt/alesia) (MIT) | The host application. Not my work. |
-| **Quantitative research engine** — indicators, market read, horizons, trade setup, thresholds, calibration, backtest harness, six research studies | **Me** | 52 files and 10,604 lines under `src/tools/finance/` (8,018 source + 2,586 test), of which 268 tests. Plus the integration into the host registry. |
+| **Quantitative research engine** — indicators, market read, horizons, trade setup, thresholds, calibration, backtest harness, six research studies | **Nobody Ohm** ([@nobodyohm-web](https://github.com/nobodyohm-web)) | 52 files and 10,604 lines under `src/tools/finance/` (8,018 source + 2,586 test), of which 268 tests. Plus the integration into the host registry. |
 
 `git shortlog -sn` will confirm the split in five seconds, so there is no reason to blur it. Everything this README claims as a result belongs to the second row.
 
@@ -164,4 +164,4 @@ If a system says it found an edge, the interesting question is what it would hav
 
 ## License
 
-MIT. Originally authored by [Virat Singh](https://github.com/virattt) (`virattt/alesia`); the quantitative research engine under `src/tools/finance/` is © 2026 Alex. See [LICENSE](LICENSE).
+MIT. Originally authored by [Virat Singh](https://github.com/virattt) (`virattt/alesia`); the quantitative research engine under `src/tools/finance/` is © 2026 Nobody Ohm. See [LICENSE](LICENSE).
