@@ -32,7 +32,7 @@ import { analyzeTimeframe } from '../market-read.js';
 import { chooseStrategy, buildLevels, type Direction, type Strategy } from '../trade-setup.js';
 import { HORIZONS, type Horizon } from '../horizons.js';
 import { DEFAULT_THRESHOLDS, type Thresholds } from '../thresholds.js';
-import { PIVOT_LOOKBACK, macd, round, type Candle } from '../indicators.js';
+import { PIVOT_LOOKBACK, atr, macd, round, type Candle } from '../indicators.js';
 
 export interface SimTrade {
   symbol: string;
@@ -63,6 +63,43 @@ export interface BacktestOptions {
   costFraction?: number;
   /** Only simulate every Nth bar, to keep long series tractable. */
   step?: number;
+  /**
+   * Implied volatility by YYYY-MM-DD, as an annualised percentage (VIX-style).
+   * When supplied, the stop is sized from IV instead of ATR.
+   */
+  ivByDate?: Map<string, number>;
+  /** Bars per year for the structure timeframe, to de-annualise IV. */
+  barsPerYear?: number;
+}
+
+/**
+ * Convert an annualised implied volatility into the same units as ATR.
+ *
+ * Two conversions, both necessary. First de-annualise: a VIX of 17 means a
+ * one-sigma daily move of 17/100/sqrt(252) of price. Second rescale: ATR is a
+ * mean RANGE and IV a standard deviation of returns, so their levels differ by
+ * a roughly constant factor. That factor is measured on the TRAILING window
+ * only, which keeps the substitution causal and isolates the question actually
+ * being tested — whether IV's variation forecasts better — from the trivial one
+ * of whether it happens to sit higher or lower than ATR on average.
+ *
+ * Returns null when the calibration window is too thin to trust.
+ */
+export function ivToAtrUnits(
+  ivPercent: number,
+  price: number,
+  barsPerYear: number,
+  trailingAtr: number[],
+  trailingIv: number[],
+  trailingPrices: number[],
+): number | null {
+  if (!(ivPercent > 0) || !(price > 0) || trailingAtr.length < 60) return null;
+  const sigmaOf = (iv: number, p: number): number => (iv / 100 / Math.sqrt(barsPerYear)) * p;
+  const rawUnits = trailingIv.map((iv, i) => sigmaOf(iv, trailingPrices[i]));
+  const meanRaw = rawUnits.reduce((x, y) => x + y, 0) / rawUnits.length;
+  const meanAtr = trailingAtr.reduce((x, y) => x + y, 0) / trailingAtr.length;
+  if (!(meanRaw > 0) || !(meanAtr > 0)) return null;
+  return sigmaOf(ivPercent, price) * (meanAtr / meanRaw);
 }
 
 /** Fixed-size window ending at `index`, inclusive. */
@@ -128,6 +165,8 @@ export function backtestSymbol(
   const maxHoldBars = opts.maxHoldBars ?? 60;
   const cost = opts.costFraction ?? 0.001;
   const step = opts.step ?? 1;
+  const ivByDate = opts.ivByDate;
+  const barsPerYear = opts.barsPerYear ?? 252;
 
   const { entry, structure, trend } = series;
   const toStructure = buildAlignment(entry, structure);
@@ -170,8 +209,32 @@ export function backtestSymbol(
     const side: Direction = directionOverride ?? bias;
 
     const structureWindow = windowAt(structure, structureCount - 1, windowBars);
+
+    // IV-sized stop, when an implied series is available for this bar. The
+    // trailing calibration uses only bars already inside the window.
+    let volUnit: number | null = null;
+    if (ivByDate) {
+      const today = ivByDate.get(structureWindow[structureWindow.length - 1].date.slice(0, 10));
+      if (today !== undefined) {
+        const trailAtr: number[] = [];
+        const trailIv: number[] = [];
+        const trailPx: number[] = [];
+        const atrSeries = atr(structureWindow, 14);
+        for (let k = 0; k < structureWindow.length; k++) {
+          const v = ivByDate.get(structureWindow[k].date.slice(0, 10));
+          const av = atrSeries[k];
+          if (v !== undefined && av !== null) {
+            trailIv.push(v);
+            trailAtr.push(av);
+            trailPx.push(structureWindow[k].close);
+          }
+        }
+        volUnit = ivToAtrUnits(today, structureRead.price, barsPerYear, trailAtr, trailIv, trailPx);
+      }
+    }
+
     const { entry: zone, stop, targets } = buildLevels(
-      side, strategy, structureRead, structureWindow, spec, PIVOT_LOOKBACK,
+      side, strategy, structureRead, structureWindow, spec, PIVOT_LOOKBACK, volUnit,
     );
     if (!zone || !stop || targets.length === 0) continue;
 

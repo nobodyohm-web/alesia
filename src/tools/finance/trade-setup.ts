@@ -233,6 +233,14 @@ export function buildLevels(
   structureCandles: Candle[],
   spec: (typeof HORIZONS)[Horizon],
   lookback: number,
+  /**
+   * Optional replacement for ATR as the volatility unit every distance here is
+   * measured in. Supplied when an implied-volatility series is available, since
+   * IV forecasts the coming excursion measurably better than a trailing average
+   * of past ranges does — and a stop is a bet on exactly that excursion.
+   * Must already be expressed as a price distance per bar.
+   */
+  volatilityUnit?: number | null,
 ): { entry: TradeSetup['entry']; stop: TradeSetup['stop']; targets: Target[]; warnings: string[] } {
   const warnings: string[] = [];
   const price = structure.price;
@@ -241,7 +249,12 @@ export function buildLevels(
   if (!atr || atr <= 0) {
     warnings.push('ATR unavailable — cannot size a stop from volatility. Levels are structural only.');
   }
-  const a = atr && atr > 0 ? atr : price * 0.02;
+  const a =
+    volatilityUnit && volatilityUnit > 0
+      ? volatilityUnit
+      : atr && atr > 0
+        ? atr
+        : price * 0.02;
 
   const { levels, trend } = structure;
   const isLong = bias === 'long';
