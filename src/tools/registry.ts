@@ -9,6 +9,13 @@ import { fearGreedTool, FEAR_GREED_DESCRIPTION } from './finance/index.js';
 import { cryptoMarketCapTool, CRYPTO_MARKET_CAP_DESCRIPTION } from './finance/index.js';
 import { sectorPerformanceTool, SECTOR_PERFORMANCE_DESCRIPTION } from './finance/index.js';
 import { economicCalendarTool, ECONOMIC_CALENDAR_DESCRIPTION } from './finance/index.js';
+import { binanceFuturesTool, BINANCE_FUTURES_DESCRIPTION } from './finance/index.js';
+import { shortInterestTool, SHORT_INTEREST_DESCRIPTION } from './finance/index.js';
+import { treasuryYieldsTool, TREASURY_YIELDS_DESCRIPTION } from './finance/index.js';
+import { fedRatesTool, FED_RATES_DESCRIPTION } from './finance/index.js';
+import { technicalAnalysisTool, TECHNICAL_ANALYSIS_DESCRIPTION } from './finance/index.js';
+import { tradeSetupTool, TRADE_SETUP_DESCRIPTION } from './finance/index.js';
+import { tradeJournalTool, TRADE_JOURNAL_DESCRIPTION } from './finance/index.js';
 import { rssIntelTool, RSS_INTELLIGENCE_DESCRIPTION } from './rss/rss-intel.js';
 import { exaSearch, perplexitySearch, tavilySearch, WEB_SEARCH_DESCRIPTION, xSearchTool, X_SEARCH_DESCRIPTION } from './search/index.js';
 import { skillTool, SKILL_TOOL_DESCRIPTION } from './skill.js';
@@ -284,6 +291,65 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: RSS_INTELLIGENCE_DESCRIPTION,
       compactDescription: 'Scan SEC EDGAR + Google News + GlobeNewsWire RSS feeds for latest news, filings, and press releases about any company or topic (free).',
       concurrencySafe: true,
+    },
+    // === Binance Futures Positioning (FREE — no API key) ===
+    {
+      name: 'binance_futures_positioning',
+      tool: binanceFuturesTool,
+      description: BINANCE_FUTURES_DESCRIPTION,
+      compactDescription: 'Funding rate, open interest trend and long/short ratios for a crypto perpetual (free). Use to judge leverage and squeeze risk behind a move.',
+      concurrencySafe: true,
+    },
+    // === FINRA Short Interest / Off-Exchange Volume (FREE — no API key) ===
+    {
+      name: 'short_interest',
+      tool: shortInterestTool,
+      description: SHORT_INTEREST_DESCRIPTION,
+      compactDescription: 'FINRA short interest with days-to-cover, daily Reg SHO short volume, or weekly dark-pool volume for a US ticker (free).',
+      concurrencySafe: true,
+    },
+    // === US Treasury Yield Curve (FREE — official primary source) ===
+    {
+      name: 'treasury_yields',
+      tool: treasuryYieldsTool,
+      description: TREASURY_YIELDS_DESCRIPTION,
+      compactDescription: 'Official US Treasury yield curve, TIPS real yields, breakeven inflation and 2s10s/3m10y spreads (free). Use for the risk-free rate in any valuation.',
+      concurrencySafe: true,
+    },
+    // === Federal Reserve Policy Rates (FREE — New York Fed) ===
+    {
+      name: 'fed_rates',
+      tool: fedRatesTool,
+      description: FED_RATES_DESCRIPTION,
+      compactDescription: 'Official Fed policy rates from the NY Fed (free): EFFR with FOMC target range, SOFR with term averages, OBFR.',
+      concurrencySafe: true,
+    },
+    // === Technical Analysis (FREE — computed locally from Yahoo/Binance candles) ===
+    {
+      name: 'technical_analysis',
+      tool: technicalAnalysisTool,
+      description: TECHNICAL_ANALYSIS_DESCRIPTION,
+      compactDescription:
+        'Multi-timeframe technical read of a stock or crypto: trend/ADX, EMAs, RSI/MACD/StochRSI, ATR and Bollinger squeeze, volume/OBV, clustered support-resistance, pivots, divergences, plus correlation and beta vs a benchmark. Use for ANY chart, level, trend or momentum question — never state a level from memory.',
+      concurrencySafe: true,
+    },
+    // === Trade Setup (FREE — structure-derived entry/stop/target plan) ===
+    {
+      name: 'trade_setup',
+      tool: tradeSetupTool,
+      description: TRADE_SETUP_DESCRIPTION,
+      compactDescription:
+        'Actionable trade plan for a stock or crypto on a day / swing / medium / long horizon: entry zone, ATR-buffered structural stop, staged targets with R multiples, reward:risk, position sizing and a scored confidence breakdown. Use whenever the user asks when to buy, sell or short, or at what price.',
+      concurrencySafe: true,
+    },
+    // === Trade Journal (LOCAL — the track record that keeps scoring honest) ===
+    {
+      name: 'trade_journal',
+      tool: tradeJournalTool,
+      description: TRADE_JOURNAL_DESCRIPTION,
+      compactDescription:
+        'Records trade ideas and outcomes, then computes the track record: win rate, expectancy in R, breakdown by horizon and strategy, and whether confidence scores were predictive. Log every actionable setup; review before repeating a setup type.',
+      concurrencySafe: false,
     },
   );
 
