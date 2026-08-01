@@ -1,8 +1,107 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { chromium, Browser, Page } from 'playwright';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
 import { logger } from '@/utils';
+
+const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+
+const BLOCKED_HOSTNAMES = new Set(['localhost', 'localhost.localdomain', 'ip6-localhost']);
+
+const BLOCKED_HOSTNAME_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa'];
+
+/**
+ * True for loopback, private, link-local, CGNAT and unique-local addresses —
+ * the destinations an agent driven by untrusted page content must not reach.
+ */
+function isPrivateAddress(address: string): boolean {
+  const version = isIP(address);
+
+  if (version === 4) {
+    const [a, b] = address.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true; // link-local, incl. cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a >= 224) return true; // multicast + reserved
+    return false;
+  }
+
+  if (version === 6) {
+    const normalized = address.toLowerCase().split('%')[0];
+    if (normalized === '::' || normalized === '::1') return true;
+    if (normalized.startsWith('fe80') || normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+    // IPv4-mapped (::ffff:127.0.0.1) — re-check the embedded v4 address.
+    const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isPrivateAddress(mapped[1]);
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Validate a URL the model asked the browser to load.
+ *
+ * Rejects non-http(s) schemes — `file://` would otherwise read any local file
+ * straight into the LLM context, bypassing the filesystem sandbox — and
+ * destinations on the loopback or private networks.
+ *
+ * @throws Error if the URL is not safe to navigate to
+ */
+export async function assertNavigableUrl(rawUrl: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid URL: ${rawUrl}`);
+  }
+
+  if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Blocked URL scheme '${parsed.protocol}': only http and https are allowed`);
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (BLOCKED_HOSTNAMES.has(hostname) || BLOCKED_HOSTNAME_SUFFIXES.some((s) => hostname.endsWith(s))) {
+    throw new Error(`Blocked host '${parsed.hostname}': local and internal hosts are not allowed`);
+  }
+
+  if (isIP(hostname)) {
+    if (isPrivateAddress(hostname)) {
+      throw new Error(`Blocked host '${parsed.hostname}': private and loopback addresses are not allowed`);
+    }
+    return;
+  }
+
+  // Resolve so a public name pointing at an internal address is caught too.
+  let addresses: { address: string }[];
+  try {
+    addresses = await lookup(hostname, { all: true });
+  } catch {
+    throw new Error(`Could not resolve host '${parsed.hostname}'`);
+  }
+  if (addresses.some((entry) => isPrivateAddress(entry.address))) {
+    throw new Error(`Blocked host '${parsed.hostname}': resolves to a private address`);
+  }
+}
+
+/**
+ * Apply the same URL policy to every request the page makes, so in-page
+ * redirects and subresources cannot reach what `assertNavigableUrl` blocks.
+ */
+async function installUrlGuard(target: Page): Promise<void> {
+  await target.route('**/*', async (route) => {
+    try {
+      await assertNavigableUrl(route.request().url());
+      await route.continue();
+    } catch {
+      await route.abort('blockedbyclient');
+    }
+  });
+}
 
 let browser: Browser | null = null;
 let page: Page | null = null;
@@ -142,6 +241,7 @@ async function ensureBrowser(): Promise<Page> {
   if (!page) {
     const context = await browser.newContext();
     page = await context.newPage();
+    await installUrlGuard(page);
   }
   return page;
 }
@@ -277,6 +377,7 @@ export const browserTool = new DynamicStructuredTool({
           if (!url) {
             return formatToolResult({ error: 'url is required for navigate action' });
           }
+          await assertNavigableUrl(url);
           const p = await ensureBrowser();
           // Use networkidle for better JS rendering on dynamic sites
           await p.goto(url, { timeout: 30000, waitUntil: 'networkidle' });
@@ -292,9 +393,11 @@ export const browserTool = new DynamicStructuredTool({
           if (!url) {
             return formatToolResult({ error: 'url is required for open action' });
           }
+          await assertNavigableUrl(url);
           const currentPage = await ensureBrowser();
           const context = currentPage.context();
           const newPage = await context.newPage();
+          await installUrlGuard(newPage);
           await newPage.goto(url, { timeout: 30000, waitUntil: 'networkidle' });
           // Close the previous page so it can't keep loading in the background
           // and so we don't leak handles. Best-effort — failure is non-fatal.

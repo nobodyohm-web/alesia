@@ -1,11 +1,73 @@
 import { describe, test, expect } from 'bun:test';
 import {
+  dropIncompleteBars,
+  summarizeQuotes,
   yahooQuoteTool,
   yahooHistoricalTool,
   yahooFinancialsTool,
   yahooKeyStatsTool,
   yahooSummaryTool,
 } from './yahoo.js';
+
+// Regression guard: Yahoo appends an all-null candle for the in-progress
+// period. `Number(null)` is 0 and `Number.isFinite(0)` is true, so coercing
+// before filtering reported close=0, percentChange=-100 and periodLow=0.
+describe('summarizeQuotes', () => {
+  const bar = (date: string, close: number) => ({
+    date,
+    open: close,
+    high: close + 1,
+    low: close - 1,
+    close,
+    volume: 1_000,
+  });
+
+  const NULL_BAR = {
+    date: '2026-08-01',
+    open: null,
+    high: null,
+    low: null,
+    close: null,
+    volume: null,
+  };
+
+  test('drops the all-null in-progress bar', () => {
+    expect(dropIncompleteBars([bar('2026-06-01', 100), NULL_BAR])).toHaveLength(1);
+  });
+
+  test('a trailing null bar does not produce close=0 or -100%', () => {
+    const { summary } = summarizeQuotes(
+      [bar('2026-06-01', 100), bar('2026-07-01', 110), NULL_BAR],
+      '5y',
+      '1mo',
+    );
+    expect(summary).toBeDefined();
+    expect(summary!.lastClose).toBe(110);
+    expect(summary!.percentChange).toBe(10);
+    expect(summary!.periodLow).toBe(99);
+    expect(summary!.lastDate).toBe('2026-07-01');
+    expect(summary!.fetchedCount).toBe(2);
+  });
+
+  test('a null high/low does not drag periodLow to 0', () => {
+    const partial = { date: '2026-07-01', open: 110, high: null, low: null, close: 110, volume: 1 };
+    const { summary } = summarizeQuotes([bar('2026-06-01', 100), partial], '1y', '1d');
+    expect(summary!.periodLow).toBe(99);
+    expect(summary!.periodHigh).toBe(101);
+  });
+
+  test('returns no summary when fewer than two usable bars remain', () => {
+    const { summary, quotes } = summarizeQuotes([bar('2026-06-01', 100), NULL_BAR, NULL_BAR], '1y', '1d');
+    expect(summary).toBeUndefined();
+    expect(quotes).toHaveLength(1);
+  });
+
+  test('computes percentChange on the usable series', () => {
+    const { summary } = summarizeQuotes([bar('2026-01-01', 50), bar('2026-02-01', 75)], '1y', '1mo');
+    expect(summary!.firstClose).toBe(50);
+    expect(summary!.percentChange).toBe(50);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Schema validation
