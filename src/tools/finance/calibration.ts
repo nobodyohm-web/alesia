@@ -22,6 +22,26 @@
  */
 import type { Horizon } from './horizons.js';
 
+/**
+ * Behavioural fingerprint of the decision engine at the moment CALIBRATION was
+ * measured, captured on a frozen synthetic fixture (see calibration.test.ts).
+ *
+ * A source-hash would fail on a renamed variable and be switched off within a
+ * week; this only moves when the engine's DECISIONS move. Its job is to make
+ * stale calibration numbers impossible to ship silently — the failure mode that
+ * matters, because a wrong expectancy quoted with a confidence interval looks
+ * more rigorous than no expectancy at all.
+ */
+export const ENGINE_SIGNATURE = {
+  trades: 70,
+  expectancyR: 0.3111,
+  winRate: 57.1,
+  byStrategy: { 'trend-pullback': 29, breakout: 40, 'range-reversion': 1 } as Record<string, number>,
+};
+
+/** When CALIBRATION was last measured against the engine ENGINE_SIGNATURE pins. */
+export const MEASURED_ON = '2026-08-01';
+
 export interface CalibrationRecord {
   /** Trades in the measured sample. */
   n: number;
