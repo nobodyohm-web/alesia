@@ -132,8 +132,11 @@ Entry prices:
 
 💰 6. PRIX D'ENTRÉE (Trade Republic 🇪🇺)
    L'utilisateur trade sur Trade Republic en EUROS. Les prix Yahoo Finance sont en USD.
-   Pour CHAQUE prix, affiche les deux devises. Utilise le taux EUR/USD du jour.
-   Si le taux exact n'est pas disponible, utilise 1 USD ≈ 0.88 EUR comme approximation.
+   Pour CHAQUE prix, affiche les deux devises.
+   Récupère le taux du jour avec `yahoo_quote` ticker='EURUSD=X' : le champ `price` donne
+   le nombre de dollars pour 1 euro, donc prix_EUR = prix_USD / price.
+   N'invente JAMAIS un taux de change : une approximation figée introduit une erreur
+   silencieuse sur chaque prix affiché. Si l'appel échoue, dis-le et n'affiche que l'USD.
    
    🟢 Agressive: $XXX (~XX€) | 🟡 Conservatrice: $XXX (~XX€) | 🔴 Deep Value: $XXX (~XX€)
    Support: $XXX (~XX€) | 52w: $XXX—$XXX

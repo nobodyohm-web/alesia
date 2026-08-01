@@ -20,4 +20,11 @@ export { fearGreedTool, FEAR_GREED_DESCRIPTION } from './fear-greed.js';
 export { cryptoMarketCapTool, CRYPTO_MARKET_CAP_DESCRIPTION } from './crypto-market-cap.js';
 export { sectorPerformanceTool, SECTOR_PERFORMANCE_DESCRIPTION } from './sector-performance.js';
 export { economicCalendarTool, ECONOMIC_CALENDAR_DESCRIPTION } from './economic-calendar.js';
+export { binanceFuturesTool, BINANCE_FUTURES_DESCRIPTION } from './binance-futures.js';
+export { shortInterestTool, SHORT_INTEREST_DESCRIPTION } from './finra.js';
+export { treasuryYieldsTool, TREASURY_YIELDS_DESCRIPTION } from './macro-rates.js';
+export { fedRatesTool, FED_RATES_DESCRIPTION } from './fed.js';
 
+export { technicalAnalysisTool, TECHNICAL_ANALYSIS_DESCRIPTION } from './technical-analysis.js';
+export { tradeSetupTool, TRADE_SETUP_DESCRIPTION } from './trade-setup.js';
+export { tradeJournalTool, TRADE_JOURNAL_DESCRIPTION } from './trade-journal.js';
