@@ -339,7 +339,7 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       tool: tradeSetupTool,
       description: TRADE_SETUP_DESCRIPTION,
       compactDescription:
-        'Actionable trade plan for a stock or crypto on a day / swing / medium / long horizon: entry zone, ATR-buffered structural stop, staged targets with R multiples, reward:risk, position sizing and a scored confidence breakdown. Use whenever the user asks when to buy, sell or short, or at what price.',
+        'Structure-derived trade plan for a stock or crypto on a day / swing / medium / long horizon: entry zone, ATR-buffered structural stop, staged targets with R multiples, reward:risk, position sizing, and a confidence breakdown SHIPPED WITH ITS MEASURED EXPECTANCY from a walk-forward backtest. The engine has no demonstrated directional edge — the calibration field says so per setup type, and must be reported. Use whenever the user asks when to buy, sell or short, or at what price.',
       concurrencySafe: true,
     },
     // === Trade Journal (LOCAL — the track record that keeps scoring honest) ===
