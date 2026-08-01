@@ -33,10 +33,10 @@ import type { Horizon } from './horizons.js';
  * more rigorous than no expectancy at all.
  */
 export const ENGINE_SIGNATURE = {
-  trades: 70,
-  expectancyR: 0.3111,
-  winRate: 57.1,
-  byStrategy: { 'trend-pullback': 29, breakout: 40, 'range-reversion': 1 } as Record<string, number>,
+  trades: 71,
+  expectancyR: 0.3068,
+  winRate: 56.3,
+  byStrategy: { 'trend-pullback': 29, breakout: 41, 'range-reversion': 1 } as Record<string, number>,
 };
 
 /** When CALIBRATION was last measured against the engine ENGINE_SIGNATURE pins. */
@@ -105,12 +105,15 @@ export const CALIBRATION: Partial<
   },
   swing: {
     overall: {
-      n: 3806,
-      expectancyR: 0.0073,
-      ci95: [-0.034, 0.051],
+      n: 3821,
+      expectancyR: 0.0062,
+      ci95: [-0.033, 0.046],
       winRate: 40.9,
       basis:
-        'Crypto only (8 Binance pairs, 2017-2026, hourly). The most reliable sample here: largest n, no survivorship bias. ' +
+        'Crypto (8 Binance pairs, 2017-2026, hourly) — the most reliable sample here: largest n, no survivorship bias. ' +
+        'Equities measured separately and SEPARATELY UNDERPOWERED: only 187 trades, because Yahoo caps hourly ' +
+        'history at ~400 days, giving expectancy -0.052R with CI [-0.240, 0.142] — an interval too wide to ' +
+        'distinguish a good system from a bad one. ' +
         NO_EDGE,
     },
     byStrategy: {
@@ -125,6 +128,14 @@ export const CALIBRATION: Partial<
       'range-reversion': {
         n: 684, expectancyR: -0.0444, ci95: [-0.144, 0.064], winRate: 37.7,
         basis: `Negative point estimate. ${NO_EDGE} An earlier harness reported this as significantly loss-making; that was an artefact of a gap-fill bug.`,
+      },
+      reversal: {
+        n: 5, expectancyR: -1.0457, ci95: [-1.05, -1.04], winRate: 0,
+        basis:
+          'FIVE trades, all stopped out. Not a measurement — a count. This setup was unreachable dead code until ' +
+          'it was fixed (it demanded a long bias in an oversold market, conditions that exclude each other by ' +
+          'construction; a backtest found the condition true 0 times in 3,011 bars). Now that it fires, it fires ' +
+          'so rarely that no sample worth the name exists. Treat any reversal setup as untested.',
       },
     },
   },

@@ -100,7 +100,7 @@ export async function fetchBinanceHistory(
 /** Yahoo daily/weekly history. Survivorship-biased by construction — see header. */
 export async function fetchYahooHistory(
   symbol: string,
-  timeframe: '1d' | '1wk',
+  timeframe: '1d' | '1wk' | '1h',
   fromISO = '2005-01-01',
 ): Promise<Candle[]> {
   const key = `yahoo-${symbol}-${timeframe}`;

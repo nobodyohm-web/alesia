@@ -32,7 +32,7 @@ import { analyzeTimeframe } from '../market-read.js';
 import { chooseStrategy, buildLevels, type Direction, type Strategy } from '../trade-setup.js';
 import { HORIZONS, type Horizon } from '../horizons.js';
 import { DEFAULT_THRESHOLDS, type Thresholds } from '../thresholds.js';
-import { PIVOT_LOOKBACK, round, type Candle } from '../indicators.js';
+import { PIVOT_LOOKBACK, macd, round, type Candle } from '../indicators.js';
 
 export interface SimTrade {
   symbol: string;
@@ -133,6 +133,16 @@ export function backtestSymbol(
   const toStructure = buildAlignment(entry, structure);
   const toTrend = buildAlignment(entry, trend);
 
+  // Confirmation signal for reversal setups, precomputed once.
+  //
+  // Safe to compute on the whole series and index at bar j, because MACD is
+  // STRICTLY CAUSAL: its value at j depends only on closes[0..j]. That is not
+  // true of everything in the indicator layer — supportResistance draws its
+  // clustering tolerance from end-of-series ATR, and swingPoints needs bars to
+  // the RIGHT of a pivot — which is exactly why those two go through windowAt()
+  // and this one does not.
+  const confirmation = macd(entry.map((c) => c.close)).histogram;
+
   const trades: SimTrade[] = [];
   // Minimum history for analyzeTimeframe to return anything at all.
   const warmup = 60;
@@ -154,12 +164,14 @@ export function backtestSymbol(
     if (!entryRead || !structureRead || !trendRead) continue;
 
     const bias: Direction = trendRead.trend.direction === 'down' ? 'short' : 'long';
-    const { strategy, timing } = chooseStrategy(bias, structureRead, entryRead, thresholds);
-    if (strategy === 'none' || timing === 'stand-aside' || timing === 'wait-confirmation') continue;
+    const { strategy, timing, directionOverride } = chooseStrategy(bias, structureRead, entryRead, thresholds);
+    if (strategy === 'none' || timing === 'stand-aside') continue;
+    // A reversal fades the trend and carries its own direction.
+    const side: Direction = directionOverride ?? bias;
 
     const structureWindow = windowAt(structure, structureCount - 1, windowBars);
     const { entry: zone, stop, targets } = buildLevels(
-      bias, strategy, structureRead, structureWindow, spec, PIVOT_LOOKBACK,
+      side, strategy, structureRead, structureWindow, spec, PIVOT_LOOKBACK,
     );
     if (!zone || !stop || targets.length === 0) continue;
 
@@ -167,15 +179,41 @@ export function backtestSymbol(
     const rr = Math.abs(target - zone.ideal) / Math.abs(zone.ideal - stop.price);
     if (!Number.isFinite(rr) || rr < spec.minRiskReward) continue;
 
-    const kind: OrderKind = timing === 'enter-now' ? 'market' : timing === 'wait-breakout' ? 'stop' : 'limit';
-    const isLong = bias === 'long';
+    const isLong = side === 'long';
+
+    // A reversal is counter-trend by construction, so the tool refuses to
+    // commit until the entry timeframe turns. Modelling that faithfully means
+    // waiting for the MACD histogram to FLIP into the trade's direction, then
+    // paying market on the next bar — not assuming a fill at the level.
+    let firstBar = i + 1;
+    if (timing === 'wait-confirmation') {
+      let flipped = -1;
+      for (let j = i + 1; j <= Math.min(i + pendingBars, entry.length - 2); j++) {
+        const now = confirmation[j];
+        const prev = confirmation[j - 1];
+        if (now === null || prev === null) continue;
+        if (isLong ? now > 0 && prev <= 0 : now < 0 && prev >= 0) {
+          flipped = j;
+          break;
+        }
+      }
+      if (flipped === -1) continue; // never confirmed — the setup expires unfilled
+      firstBar = flipped + 1;
+    }
+
+    const kind: OrderKind =
+      timing === 'enter-now' || timing === 'wait-confirmation'
+        ? 'market'
+        : timing === 'wait-breakout'
+          ? 'stop'
+          : 'limit';
 
     // Scan for the fill BAR BY BAR, never by `step`. Stepping the fill scan as
     // well would give a limit order fewer chances to fill than it really had,
     // quietly under-sampling pullback entries and over-weighting market ones —
     // which moved measured expectancy by 0.26R purely as an artefact.
-    const deadline = Math.min(i + pendingBars, entry.length - 2);
-    for (let j = i + 1; j <= deadline; j++) {
+    const deadline = Math.min(firstBar + pendingBars, entry.length - 2);
+    for (let j = firstBar; j <= deadline; j++) {
       const fill = fillPriceOn(entry[j], kind, zone.ideal, isLong);
       if (fill === null) continue;
 
@@ -190,7 +228,7 @@ export function backtestSymbol(
 
       const trade = simulateExit(
         symbol, horizon,
-        { direction: bias, strategy, stop: stop.price, target },
+        { direction: side, strategy, stop: stop.price, target },
         fill, entry, j, maxHoldBars, cost,
       );
       if (trade) {

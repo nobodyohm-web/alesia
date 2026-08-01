@@ -67,15 +67,34 @@ async function loadCrypto(symbol: string, withIntraday: boolean): Promise<Datase
   };
 }
 
-async function loadEquity(symbol: string): Promise<Dataset> {
+/**
+ * Yahoo refuses hourly bars beyond roughly 400 days — verified: a 730-day
+ * request errors outright, 400 days returns ~1,900 bars for SPY. That caps the
+ * equity swing sample at about 18 months, far shorter than the crypto series,
+ * and the resulting n is reported rather than glossed over.
+ */
+const EQUITY_HOURLY_DAYS = 400;
+
+async function loadEquity(symbol: string, withHourly: boolean): Promise<Dataset> {
   const d1 = await fetchYahooHistory(symbol, '1d');
   const w1 = await fetchYahooHistory(symbol, '1wk');
+
+  let swingSeries: Dataset['series']['swing'] = null;
+  if (withHourly) {
+    const from = new Date(Date.now() - EQUITY_HOURLY_DAYS * 86_400_000).toISOString().slice(0, 10);
+    const h1 = await fetchYahooHistory(symbol, '1h', from);
+    // Session-aware: a 4h bar welded across an overnight gap describes no
+    // period anyone traded.
+    const h4 = resample(h1, 4, true);
+    if (h1.length > 400 && h4.length > 120) swingSeries = { entry: h1, structure: h4, trend: d1 };
+  }
+
   return {
     symbol,
     market: 'equity',
     series: {
       day: null,
-      swing: null, // needs intraday Yahoo cannot serve this far back
+      swing: swingSeries,
       medium: d1.length > 300 ? { entry: d1, structure: d1, trend: w1 } : null,
       long: d1.length > 300 && w1.length > 100 ? { entry: d1, structure: w1, trend: w1 } : null,
     },
@@ -154,7 +173,7 @@ const SPLIT_DATE = '2023-06-01T00:00:00.000Z';
 
 async function main(): Promise<void> {
   const mode = process.argv[2] ?? 'baseline';
-  const universe = mode === 'day' ? CRYPTO.slice(0, 4) : CRYPTO;
+  const universe = mode === "day" ? CRYPTO.slice(0, 4) : CRYPTO;
   console.log('Loading history (cached after the first run)...');
 
   const datasets: Dataset[] = [];
@@ -162,7 +181,7 @@ async function main(): Promise<void> {
     try { datasets.push(await loadCrypto(s, mode === 'day')); } catch (e) { console.log(`  ${s}: ${(e as Error).message}`); }
   }
   for (const s of mode === 'day' ? [] : EQUITY) {
-    try { datasets.push(await loadEquity(s)); } catch (e) { console.log(`  ${s}: ${(e as Error).message}`); }
+    try { datasets.push(await loadEquity(s, mode === 'equity-swing')); } catch (e) { console.log(`  ${s}: ${(e as Error).message}`); }
   }
 
   const crypto = datasets.filter((d) => d.market === 'crypto');
@@ -200,6 +219,27 @@ async function main(): Promise<void> {
     const { train, test } = splitByDate(atRealCost, SPLIT_DATE);
     report('  train (< 2023-06) @15bp', train);
     report('  test  (>= 2023-06) @15bp', test);
+    return;
+  }
+
+  if (mode === 'equity-swing') {
+    console.log('=== EQUITY SWING (1d bias / 4h structure / 1h trigger) ===');
+    console.log(`  Yahoo caps hourly history at ~${EQUITY_HOURLY_DAYS} days, so this sample is short AND`);
+    console.log('  survivorship-biased — it contains only names that still trade today.\n');
+    const trades = runAll(equity, 'swing', DEFAULT_THRESHOLDS);
+    report('equity swing', trades);
+    for (const strat of ['trend-pullback', 'breakout', 'range-reversion', 'reversal']) {
+      const sub = trades.filter((t) => t.strategy === strat);
+      if (sub.length > 0) report(`  └ ${strat}`, sub);
+    }
+    console.log('');
+    console.log('=== REVERSAL, all horizons (now that wait-confirmation is simulated) ===');
+    for (const h of ['swing', 'medium', 'long'] as Horizon[]) {
+      const all = [...runAll(crypto, h, DEFAULT_THRESHOLDS), ...runAll(equity, h, DEFAULT_THRESHOLDS)];
+      const rev = all.filter((t) => t.strategy === 'reversal');
+      if (rev.length > 0) report(`reversal ${h}`, rev);
+      else console.log(`reversal ${h}`.padEnd(28) + 'no trades');
+    }
     return;
   }
 

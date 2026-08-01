@@ -106,7 +106,7 @@ export function chooseStrategy(
   structure: MarketRead,
   entry: MarketRead,
   t: Thresholds = DEFAULT_THRESHOLDS,
-): { strategy: Strategy; timing: Timing; reason: string } {
+): { strategy: Strategy; timing: Timing; reason: string; directionOverride?: Direction } {
   const { regime, trend, momentum, levels, volatility } = structure;
   const atr = volatility.atr ?? 0;
   const distanceToMa =
@@ -183,18 +183,31 @@ export function chooseStrategy(
       }
     }
 
-    // A divergence plus an exhausted oscillator at an edge is the only
-    // counter-trend setup worth naming; everything else is guessing.
-    const supportive = structure.divergences.some(
-      (d) => d.kind === 'regular' && ((bias === 'long' && d.type === 'bullish') || (bias === 'short' && d.type === 'bearish')),
-    );
-    const exhausted =
-      (bias === 'long' && momentum.rsiState === 'oversold') || (bias === 'short' && momentum.rsiState === 'overbought');
-    if (supportive && exhausted) {
+    // A divergence plus an exhausted oscillator is the only counter-trend setup
+    // worth naming; everything else is guessing.
+    //
+    // The direction comes from the EXCESS, not from the trend. This branch
+    // previously demanded a long bias in an oversold market (or a short bias in
+    // an overbought one) — conditions that exclude each other by construction,
+    // since the bias is derived from the very trend producing the RSI reading.
+    // It was therefore unreachable: a backtest found `exhausted` true 0 times
+    // in 3,011 bars. Fading an extreme means trading AGAINST the prevailing
+    // bias, so the setup carries its own direction.
+    const reversalDirection: Direction | null =
+      momentum.rsiState === 'oversold' ? 'long' : momentum.rsiState === 'overbought' ? 'short' : null;
+    const supportive =
+      reversalDirection !== null &&
+      structure.divergences.some(
+        (d) =>
+          d.kind === 'regular' &&
+          (reversalDirection === 'long' ? d.type === 'bullish' : d.type === 'bearish'),
+      );
+    if (reversalDirection !== null && supportive) {
       return {
         strategy: 'reversal',
         timing: 'wait-confirmation',
-        reason: 'Regular divergence with an exhausted oscillator. Counter-trend, so it needs confirmation on the entry timeframe before committing.',
+        directionOverride: reversalDirection,
+        reason: `Regular ${reversalDirection === 'long' ? 'bullish' : 'bearish'} divergence with an ${momentum.rsiState} oscillator (RSI ${momentum.rsi}). Counter-trend against the ${bias} bias, so it needs confirmation on the entry timeframe before committing.`,
       };
     }
 
@@ -562,7 +575,9 @@ export const tradeSetupTool = new DynamicStructuredTool({
           ? 'short'
           : 'long';
 
-      const { strategy, timing, reason } = chooseStrategy(bias, structureRead, entryRead);
+      const { strategy, timing, reason, directionOverride } = chooseStrategy(bias, structureRead, entryRead);
+      // A reversal fades the trend, so it overrides the higher-timeframe bias.
+      const side: Direction = directionOverride ?? bias;
       const lookback = PIVOT_LOOKBACK;
 
       let setup: TradeSetup;
@@ -582,7 +597,7 @@ export const tradeSetupTool = new DynamicStructuredTool({
         };
       } else {
         const { entry, stop, targets, warnings } = buildLevels(
-          bias,
+          side,
           strategy,
           structureRead,
           structureSet.candles,
@@ -595,7 +610,7 @@ export const tradeSetupTool = new DynamicStructuredTool({
         const primary = targets[1] ?? targets[0] ?? null;
         const riskReward = primary ? primary.rMultiple : null;
         const confidence = scoreConfidence(
-          bias,
+          side,
           strategy,
           trendRead,
           structureRead,
@@ -622,10 +637,10 @@ export const tradeSetupTool = new DynamicStructuredTool({
               ? `Enter only on a ${spec.structureTf} close beyond ${entry?.ideal}, ideally on above-average volume. A wick through does not count.`
               : timing === 'wait-pullback'
                 ? `Wait for price to trade back into ${entry?.zoneLow}–${entry?.zoneHigh}. Do not chase.`
-                : `Wait for the ${spec.entryTf} chart to confirm the turn (MACD histogram flipping ${bias === 'long' ? 'positive' : 'negative'}) before committing.`;
+                : `Wait for the ${spec.entryTf} chart to confirm the turn (MACD histogram flipping ${side === 'long' ? 'positive' : 'negative'}) before committing.`;
 
         setup = {
-          direction: bias,
+          direction: side,
           strategy,
           timing,
           trigger: triggerText,
@@ -635,7 +650,7 @@ export const tradeSetupTool = new DynamicStructuredTool({
           riskReward,
           invalidation:
             stop && entry
-              ? `${bias === 'long' ? 'A close below' : 'A close above'} ${stop.price} on the ${spec.structureTf} chart. That level is ${stop.distanceAtr} ATR from the entry, so normal noise should not reach it — if it does, the read was wrong.`
+              ? `${side === 'long' ? 'A close below' : 'A close above'} ${stop.price} on the ${spec.structureTf} chart. That level is ${stop.distanceAtr} ATR from the entry, so normal noise should not reach it — if it does, the read was wrong.`
               : 'n/a',
           confidence,
           warnings: [...warnings, reason],
