@@ -76,6 +76,12 @@ Vérifie ces points et mentionne ceux qui échouent :
 🧬 CONFIANCE XX/100 — DÉCOMPOSITION
    [Chaque facteur : nom, points/max, note. Reprends-les tels quels, ne les résume pas.]
 
+📐 CALIBRATION MESURÉE  (obligatoire)
+   [Reprends `calibration.verdict` du retour de trade_setup. Si l'intervalle de
+    confiance couvre zéro, dis-le explicitement : aucun avantage démontré sur ce
+    type de setup. Le score de confiance décrit des conditions, ce n'est PAS une
+    probabilité de gain — ne laisse jamais l'utilisateur croire l'inverse.]
+
 ⚠️ INVALIDATION
    [Ce qui tue l'idée, et à quel niveau exactement]
 

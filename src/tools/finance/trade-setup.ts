@@ -18,6 +18,8 @@ import { getCandles, type Market } from './candles.js';
 import { analyzeTimeframe, type MarketRead } from './market-read.js';
 import { HORIZONS, HORIZON_DOCTRINE, type Horizon } from './horizons.js';
 import { round, swingPoints, PIVOT_LOOKBACK, type Candle } from './indicators.js';
+import { DEFAULT_THRESHOLDS, type Thresholds } from './thresholds.js';
+import { calibrationFor } from './calibration.js';
 
 export type Direction = 'long' | 'short';
 export type Timing = 'enter-now' | 'wait-pullback' | 'wait-breakout' | 'wait-confirmation' | 'stand-aside';
@@ -103,6 +105,7 @@ export function chooseStrategy(
   bias: Direction,
   structure: MarketRead,
   entry: MarketRead,
+  t: Thresholds = DEFAULT_THRESHOLDS,
 ): { strategy: Strategy; timing: Timing; reason: string } {
   const { regime, trend, momentum, levels, volatility } = structure;
   const atr = volatility.atr ?? 0;
@@ -117,24 +120,41 @@ export function chooseStrategy(
     };
   }
 
-  const trending = trend.strength !== null && trend.strength >= 22;
+  const trending = trend.strength !== null && trend.strength >= t.adxSetupTrending;
   const aligned = (bias === 'long' && trend.direction === 'up') || (bias === 'short' && trend.direction === 'down');
 
   if (trending && aligned) {
     const extended =
-      (bias === 'long' && (momentum.rsi ?? 50) > 72) || (bias === 'short' && (momentum.rsi ?? 50) < 28);
-    // More than 2 ATR from the mean is chasing, whatever the trend says.
-    const stretched = distanceToMa !== null && distanceToMa > 2;
+      (bias === 'long' && (momentum.rsi ?? 50) > t.rsiExtendedLong) ||
+      (bias === 'short' && (momentum.rsi ?? 50) < t.rsiExtendedShort);
 
-    if (extended || stretched) {
+    // Price this far from its own mean is a parabolic leg, not a trend to
+    // join. A "pullback entry" here is anchored on an EMA several ATR below
+    // the market: it either never fills, or it fills precisely because the
+    // trend has broken. Standing aside is the honest answer.
+    //
+    // This branch used to return trend-pullback/wait-pullback — the same thing
+    // the fall-through already produced for any distance above nearMeanAtr. The
+    // threshold was therefore inert, which a sweep exposed: stretchedAtr at
+    // 1.0, 1.5, 2.0 and 3.0 all yielded byte-identical results (n=2364,
+    // exp=0.0727). A knob that cannot change an outcome is not a parameter.
+    if (distanceToMa !== null && distanceToMa > t.stretchedAtr) {
       return {
-        strategy: 'trend-pullback',
-        timing: 'wait-pullback',
-        reason: `Trend is intact but price is extended (${extended ? `RSI ${momentum.rsi}` : `${round(distanceToMa ?? 0, 1)} ATR from EMA20`}). Entering here pays the worst price of the move.`,
+        strategy: 'none',
+        timing: 'stand-aside',
+        reason: `Price sits ${round(distanceToMa, 1)} ATR from its EMA20 — a parabolic extension, not a trend to join. Any pullback deep enough to enter on would mean the trend has already broken.`,
       };
     }
 
-    const nearMean = distanceToMa !== null && distanceToMa <= 1;
+    if (extended) {
+      return {
+        strategy: 'trend-pullback',
+        timing: 'wait-pullback',
+        reason: `Trend is intact but momentum is stretched (RSI ${momentum.rsi}). Entering here pays the worst price of the move.`,
+      };
+    }
+
+    const nearMean = distanceToMa !== null && distanceToMa <= t.nearMeanAtr;
     return {
       strategy: 'trend-pullback',
       timing: nearMean ? 'enter-now' : 'wait-pullback',
@@ -147,14 +167,14 @@ export function chooseStrategy(
   if (regime === 'ranging' || !trending) {
     const pos = levels.rangePosition;
     if (pos !== null) {
-      if (bias === 'long' && pos < 0.3) {
+      if (bias === 'long' && pos < t.rangeLowThird) {
         return {
           strategy: 'range-reversion',
           timing: 'enter-now',
           reason: 'No trend, and price sits in the lower third of its range. Mean reversion is the only edge available here.',
         };
       }
-      if (bias === 'short' && pos > 0.7) {
+      if (bias === 'short' && pos > t.rangeHighThird) {
         return {
           strategy: 'range-reversion',
           timing: 'enter-now',
@@ -406,7 +426,7 @@ export function scoreConfidence(
   });
 
   const rsiValue = structure.momentum.rsi ?? 50;
-  const roomToRun = wantUp ? rsiValue < 68 : rsiValue > 32;
+  const roomToRun = wantUp ? rsiValue < DEFAULT_THRESHOLDS.rsiHeadroomLong : rsiValue > DEFAULT_THRESHOLDS.rsiHeadroomShort;
   factors.push({
     factor: 'Momentum headroom',
     points: roomToRun ? 10 : 2,
@@ -662,6 +682,11 @@ export const tradeSetupTool = new DynamicStructuredTool({
           asOf: structureRead.lastDate,
           setup,
           sizing,
+          // Attached to every recommendation on purpose: a confidence score is
+          // meaningless unless what it scores has a known hit rate. Where the
+          // backtest found no edge, the tool says so instead of letting a
+          // number imply one.
+          calibration: calibrationFor(input.horizon as Horizon, setup.strategy),
           context: {
             trend: {
               timeframe: spec.trendTf,

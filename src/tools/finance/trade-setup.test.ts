@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { buildLevels, chooseStrategy, scoreConfidence, tradeSetupTool } from './trade-setup.js';
 import { analyzeTimeframe } from './market-read.js';
 import { HORIZONS, HORIZON_DOCTRINE, type Horizon } from './horizons.js';
+import { DEFAULT_THRESHOLDS } from './thresholds.js';
 import { aggregateCandles, dropDuplicateWeeklyBar, resolveSymbol } from './candles.js';
 import type { Candle } from './indicators.js';
 
@@ -370,5 +371,44 @@ describe('dropDuplicateWeeklyBar', () => {
 
   test('is a no-op on a single bar', () => {
     expect(dropDuplicateWeeklyBar([wk('2026-07-27T00:00:00Z', 1, 1)])).toHaveLength(1);
+  });
+});
+
+describe('extension guard', () => {
+  // Regression: this threshold was inert. Both branches returned
+  // trend-pullback and differed only in timing, but `stretched` requires
+  // distance > stretchedAtr while `nearMean` requires distance <= nearMeanAtr —
+  // conditions that cannot both hold. A sweep proved it: stretchedAtr at 1.0,
+  // 1.5, 2.0 and 3.0 produced byte-identical trade sets.
+  const trendingRead = read(UPTREND);
+
+  test('the threshold actually changes the outcome', () => {
+    const strict = chooseStrategy('long', trendingRead, trendingRead, {
+      ...DEFAULT_THRESHOLDS,
+      stretchedAtr: 0.01,
+    });
+    const loose = chooseStrategy('long', trendingRead, trendingRead, {
+      ...DEFAULT_THRESHOLDS,
+      stretchedAtr: 999,
+    });
+    expect(strict.strategy).not.toBe(loose.strategy);
+  });
+
+  test('a parabolic extension stands aside rather than offering an entry', () => {
+    const strict = chooseStrategy('long', trendingRead, trendingRead, {
+      ...DEFAULT_THRESHOLDS,
+      stretchedAtr: 0.01,
+    });
+    expect(strict.strategy).toBe('none');
+    expect(strict.timing).toBe('stand-aside');
+    expect(strict.reason).toContain('ATR from its EMA20');
+  });
+
+  test('a normal distance from the mean still produces a setup', () => {
+    const loose = chooseStrategy('long', trendingRead, trendingRead, {
+      ...DEFAULT_THRESHOLDS,
+      stretchedAtr: 999,
+    });
+    expect(loose.strategy).not.toBe('none');
   });
 });

@@ -38,6 +38,7 @@ import {
   type Divergence,
   type Level,
 } from './indicators.js';
+import { DEFAULT_THRESHOLDS, type Thresholds } from './thresholds.js';
 
 export type TrendDirection = 'up' | 'down' | 'sideways';
 export type Regime = 'trending' | 'ranging' | 'volatile-expansion' | 'compressed';
@@ -169,7 +170,11 @@ function strengthLabel(value: number | null): string {
  * `barsPerYear` differs between a 24/7 crypto market and a 252-day equity
  * calendar; passing it in is what keeps annualised volatility honest.
  */
-export function analyzeTimeframe(candles: Candle[], barsPerYear = 252): MarketRead | null {
+export function analyzeTimeframe(
+  candles: Candle[],
+  barsPerYear = 252,
+  t: Thresholds = DEFAULT_THRESHOLDS,
+): MarketRead | null {
   // Below ~60 bars, EMA50 and ADX are either undefined or dominated by their
   // seed. Returning a partial read invites the model to trust numbers that
   // carry no information, so refuse instead.
@@ -193,10 +198,10 @@ export function analyzeTimeframe(candles: Candle[], barsPerYear = 252): MarketRe
 
   let direction: TrendDirection = 'sideways';
   let directionSource: TrendRead['directionSource'] = 'none';
-  if (adxValue !== null && adxValue >= 20 && plusDi !== null && minusDi !== null) {
+  if (adxValue !== null && adxValue >= t.adxDirectionGate && plusDi !== null && minusDi !== null) {
     direction = plusDi > minusDi ? 'up' : 'down';
     directionSource = 'adx';
-  } else if (slope !== null && Math.abs(slope) > 0.1) {
+  } else if (slope !== null && Math.abs(slope) > t.driftSlopeMin) {
     // Below the ADX threshold, fall back to the regression slope so a quiet
     // drift is not reported as flat — but record that it is only a drift.
     direction = slope > 0 ? 'up' : 'down';
@@ -234,13 +239,13 @@ export function analyzeTimeframe(candles: Candle[], barsPerYear = 252): MarketRe
     rsiState:
       rsiValue === null
         ? null
-        : rsiValue >= 70
+        : rsiValue >= t.rsiOverbought
           ? 'overbought'
-          : rsiValue >= 55
+          : rsiValue >= t.rsiBullish
             ? 'bullish'
-            : rsiValue > 45
+            : rsiValue > t.rsiNeutralLow
               ? 'neutral'
-              : rsiValue > 30
+              : rsiValue > t.rsiOversold
                 ? 'bearish'
                 : 'oversold',
     rsiPrior: at(rsiSeries, 5) !== null ? round(at(rsiSeries, 5) as number, 1) : null,
@@ -256,7 +261,7 @@ export function analyzeTimeframe(candles: Candle[], barsPerYear = 252): MarketRe
           : 'bearish'
         : null,
     stochRsiK: stochK !== null ? round(stochK, 1) : null,
-    stochRsiState: stochK === null ? null : stochK >= 80 ? 'overbought' : stochK <= 20 ? 'oversold' : 'neutral',
+    stochRsiState: stochK === null ? null : stochK >= t.stochOverbought ? 'overbought' : stochK <= t.stochOversold ? 'oversold' : 'neutral',
     roc10: last(roc(closes, 10)) !== null ? round(last(roc(closes, 10)) as number, 2) : null,
   };
 
@@ -337,9 +342,9 @@ export function analyzeTimeframe(candles: Candle[], barsPerYear = 252): MarketRe
   // squeeze while being the cleanest trend there is, and calling that
   // "compressed" would route it to a breakout entry instead of a pullback.
   let regime: Regime = 'ranging';
-  const stronglyTrending = adxValue !== null && adxValue >= 30;
+  const stronglyTrending = adxValue !== null && adxValue >= t.adxStrongTrend;
   if (squeezeNow === true && !stronglyTrending) regime = 'compressed';
-  else if (adxValue !== null && adxValue >= 25) regime = 'trending';
+  else if (adxValue !== null && adxValue >= t.adxTrendingRegime) regime = 'trending';
   else if (volatility.bollingerBandwidth !== null && atrPct !== null && atrPct > 4) regime = 'volatile-expansion';
 
   // --- Divergences -------------------------------------------------------
@@ -349,7 +354,7 @@ export function analyzeTimeframe(candles: Candle[], barsPerYear = 252): MarketRe
   const signals: string[] = [];
   if (trend.maRegime === 'golden') signals.push('EMA50 above EMA200 — long-term regime is constructive');
   if (trend.maRegime === 'death') signals.push('EMA50 below EMA200 — long-term regime is defensive');
-  if (adxValue !== null && adxValue < 20) signals.push(`ADX ${round(adxValue, 1)} — no trend; trend-following entries are low-quality here`);
+  if (adxValue !== null && adxValue < t.adxDirectionGate) signals.push(`ADX ${round(adxValue, 1)} — no trend; trend-following entries are low-quality here`);
   if (structure === 'HH-HL') signals.push('Higher highs and higher lows — intact uptrend structure');
   if (structure === 'LH-LL') signals.push('Lower highs and lower lows — intact downtrend structure');
   if (momentum.rsiState === 'oversold') signals.push(`RSI ${momentum.rsi} — oversold`);

@@ -256,6 +256,7 @@ ${toolDescriptions}
 - When **trade_setup** returns "stand-aside", report that as the answer. Do not manufacture an entry to seem useful — no setup is a valid, frequently correct conclusion.
 - Never mix horizons in one recommendation. A day-trade entry with a long-term stop is incoherent and expensive.
 - State reward:risk and the confidence score with its factors whenever you give a setup. An unexplained score is a black box, and nobody should size a position from one.
+- ALWAYS report the calibration.verdict field that trade_setup returns, in the user's own words. It carries the measured expectancy of that exact setup type over a walk-forward backtest. When it says no edge was demonstrated, say so plainly — a confidence score describes conditions, it is NOT a probability of profit, and letting the user infer otherwise is the most harmful thing this tool can do.
 
 ## Smart Routing
 
