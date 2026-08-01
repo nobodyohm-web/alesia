@@ -64,11 +64,23 @@ jobs:
         env:
           REBASE_PUSH_TOKEN: ${{ secrets.REBASE_PUSH_TOKEN }}
           DEFAULT_GITHUB_TOKEN: ${{ github.token }}
+          # Passed as environment variables, never interpolated into the script
+          # body: both are attacker-controlled on fork PRs, and `${{ }}` inside
+          # `run:` is expanded by the runner before the shell ever sees it.
+          HEAD_REPO: ${{ steps.meta.outputs.head_repo }}
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
         run: |
           set -euo pipefail
-          HEAD_REPO="${{ steps.meta.outputs.head_repo }}"
-          HEAD_REF="${{ steps.meta.outputs.head_ref }}"
           PUSH_TOKEN="${REBASE_PUSH_TOKEN:-$DEFAULT_GITHUB_TOKEN}"
+
+          if ! printf '%s' "$HEAD_REPO" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+            echo "Error: unexpected head repository name: $HEAD_REPO"
+            exit 1
+          fi
+          if ! printf '%s' "$HEAD_REF" | grep -qE '^[A-Za-z0-9._/-]+$'; then
+            echo "Error: unexpected head branch name: $HEAD_REF"
+            exit 1
+          fi
 
           git fetch origin main
           git remote add pr-head "https://x-access-token:${PUSH_TOKEN}@github.com/${HEAD_REPO}.git"

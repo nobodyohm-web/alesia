@@ -111,6 +111,74 @@ const PERIOD_MAX_CANDLES: Record<string, number> = {
   '1mo': 30, '3mo': 65, '6mo': 60, '1y': 60, '2y': 60, '5y': 60, 'max': 60,
 };
 
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+/**
+ * Drop the placeholder bars Yahoo appends for the in-progress period.
+ *
+ * Yahoo returns a candle whose OHLCV fields are all `null` for the current,
+ * not-yet-closed period — always on monthly data, and on daily/weekly before
+ * the session opens. `Number(null)` is `0` and `Number.isFinite(0)` is `true`,
+ * so coercing before filtering keeps that bar and reports a close of $0, a
+ * -100% move and a period low of $0.
+ */
+export function dropIncompleteBars(
+  quotes: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return quotes.filter((q) => isFiniteNumber(q.close));
+}
+
+/**
+ * Build the price summary from a series of candles.
+ *
+ * @param rawQuotes - Candles as returned by `yahooFinance.chart`
+ * @returns The summary and the candles it was derived from, or undefined when
+ *   fewer than two usable candles remain
+ */
+export function summarizeQuotes(
+  rawQuotes: Array<Record<string, unknown>>,
+  period: string,
+  interval: string,
+): { summary?: Record<string, unknown>; quotes: Array<Record<string, unknown>> } {
+  const quotes = dropIncompleteBars(rawQuotes);
+  if (quotes.length < 2) {
+    return { quotes };
+  }
+
+  const fullCloses = quotes.map((q) => q.close as number);
+  // Same trap as `close`: a null high/low would coerce to a finite 0.
+  const fullHighs = quotes.map((q) => q.high).filter(isFiniteNumber);
+  const fullLows = quotes.map((q) => q.low).filter(isFiniteNumber);
+  const firstClose = fullCloses[0];
+  const lastClose = fullCloses[fullCloses.length - 1];
+  const high = fullHighs.length ? Math.max(...fullHighs) : null;
+  const low = fullLows.length ? Math.min(...fullLows) : null;
+  const pctChange = firstClose !== 0 ? ((lastClose - firstClose) / firstClose) * 100 : null;
+  const ma50 =
+    fullCloses.length >= 50 ? fullCloses.slice(-50).reduce((a, b) => a + b, 0) / 50 : null;
+  const ma200 =
+    fullCloses.length >= 200 ? fullCloses.slice(-200).reduce((a, b) => a + b, 0) / 200 : null;
+
+  return {
+    quotes,
+    summary: {
+      period,
+      interval,
+      fetchedCount: quotes.length,
+      firstDate: quotes[0].date,
+      lastDate: quotes[quotes.length - 1].date,
+      firstClose,
+      lastClose,
+      percentChange: pctChange !== null ? Number(pctChange.toFixed(2)) : null,
+      periodHigh: high,
+      periodLow: low,
+      ma50: ma50 !== null ? Number(ma50.toFixed(2)) : null,
+      ma200: ma200 !== null ? Number(ma200.toFixed(2)) : null,
+    },
+  };
+}
+
 export const yahooHistoricalTool = new DynamicStructuredTool({
   name: 'yahoo_historical',
   description:
@@ -132,44 +200,12 @@ export const yahooHistoricalTool = new DynamicStructuredTool({
         `yahoo.chart ${ticker}`,
       )) as unknown as Record<string, unknown>;
 
-      const quotes = (result.quotes || []) as Array<Record<string, unknown>>;
+      const rawQuotes = (result.quotes || []) as Array<Record<string, unknown>>;
       const maxCandles = PERIOD_MAX_CANDLES[input.period] ?? 60;
 
-      // Compute the summary on the FULL fetched series so MA200 / period highs
-      // don't degrade when the candle array is truncated for token reasons.
-      let summary: Record<string, unknown> | undefined;
-      if (quotes.length >= 2) {
-        const fullCloses = quotes.map((q) => Number(q.close)).filter((n) => Number.isFinite(n));
-        const fullHighs = quotes.map((q) => Number(q.high)).filter((n) => Number.isFinite(n));
-        const fullLows = quotes.map((q) => Number(q.low)).filter((n) => Number.isFinite(n));
-        const firstClose = fullCloses[0];
-        const lastClose = fullCloses[fullCloses.length - 1];
-        const high = fullHighs.length ? Math.max(...fullHighs) : null;
-        const low = fullLows.length ? Math.min(...fullLows) : null;
-        const pctChange = Number.isFinite(firstClose) && firstClose !== 0
-          ? ((lastClose - firstClose) / firstClose) * 100
-          : null;
-        const ma50 = fullCloses.length >= 50
-          ? fullCloses.slice(-50).reduce((a, b) => a + b, 0) / 50
-          : null;
-        const ma200 = fullCloses.length >= 200
-          ? fullCloses.slice(-200).reduce((a, b) => a + b, 0) / 200
-          : null;
-        summary = {
-          period: input.period,
-          interval: input.interval,
-          fetchedCount: quotes.length,
-          firstDate: quotes[0].date,
-          lastDate: quotes[quotes.length - 1].date,
-          firstClose: Number.isFinite(firstClose) ? firstClose : null,
-          lastClose: Number.isFinite(lastClose) ? lastClose : null,
-          percentChange: pctChange !== null ? Number(pctChange.toFixed(2)) : null,
-          periodHigh: high,
-          periodLow: low,
-          ma50: ma50 !== null ? Number(ma50.toFixed(2)) : null,
-          ma200: ma200 !== null ? Number(ma200.toFixed(2)) : null,
-        };
-      }
+      // The summary is computed on the FULL usable series so MA200 / period
+      // highs don't degrade when the candle array is truncated for token reasons.
+      const { summary, quotes } = summarizeQuotes(rawQuotes, input.period, input.interval);
 
       const candles = quotes.slice(-maxCandles).map((q) => ({
         date: q.date, open: q.open, high: q.high, low: q.low, close: q.close, volume: q.volume,

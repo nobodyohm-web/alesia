@@ -9,6 +9,7 @@ import { estimateTokens, getAutoCompactThreshold, KEEP_TOOL_USES } from '../util
 import { exceedsSizeCap, persistLargeResult, buildPersistedContent } from '../utils/tool-result-storage.js';
 import { enforceResultBudget } from '../utils/tool-result-budget.js';
 import { formatUserFacingError, isContextOverflowError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
 import type { AgentConfig, AgentEvent, CompactionEvent, ContextClearedEvent, MicrocompactEvent, QueueDrainEvent, StreamMode, StreamProgressEvent, TokenUsage } from '../agent/types.js';
 import type { MessageQueue } from '../utils/message-queue.js';
 import { compactContext, MAX_CONSECUTIVE_COMPACTION_FAILURES, MIN_TOOL_RESULTS_FOR_COMPACTION } from './compact.js';
@@ -222,7 +223,9 @@ export class Agent {
         if (this.shouldRetryMasterAnalysisFormat(responseText ?? '', ctx)) {
           this.masterAnalysisFormatRetried = true;
           messages.push(response);
-          messages.push(new SystemMessage(MASTER_ANALYSIS_RETRY_PROMPT));
+          // HumanMessage, not SystemMessage: @langchain/anthropic rejects any
+          // system message that is not the first one in the array.
+          messages.push(new HumanMessage(MASTER_ANALYSIS_RETRY_PROMPT));
           continue;
         }
         yield* this.handleDirectResponse(responseText ?? '', ctx);
@@ -239,7 +242,9 @@ export class Agent {
         const distinctDataTools = new Set(toolRecords.filter(t => dataTools.has(t.tool)).map(t => t.tool));
         if (masterSkillUsed && distinctDataTools.size >= 3 && ctx.iteration > 3) {
           // All data tools called — force report generation by calling LLM without tools
-          const formatReminder = new SystemMessage(
+          // HumanMessage, not SystemMessage: @langchain/anthropic rejects any
+          // system message that is not the first one in the array.
+          const formatReminder = new HumanMessage(
             `RAPPEL FORMAT (CRITICAL) — Tu as maintenant TOUTES les données. STOP les appels d'outils.\n` +
             `Génère MAINTENANT le rapport final EXACTEMENT dans ce format :\n` +
             `╔═══════════════════════════════════════════════════════════╗\n` +
@@ -250,16 +255,25 @@ export class Agent {
             `Sections: 🔍 PROFIL, 📊 1. FINANCIERS, 📡 2. VEILLE, ⚠️ 3. RISQUE, 🧬 4. SCORING XX/100, ⚖️ 5. VALORISATION, 💰 6. PRIX ENTRÉE (USD+EUR), 📌 7. CONCLUSION\n` +
             `Stars: 80-100=⭐⭐⭐⭐⭐ | 65-79=⭐⭐⭐⭐ | 50-64=⭐⭐⭐ | 35-49=⭐⭐ | 0-34=⭐`
           );
-          messages.push(response);
-          messages.push(formatReminder);
-          // Call LLM WITHOUT tools to force text generation
-          const { response: finalResponse } = await callLlmWithMessages(messages, {
-            model: this.model,
-            signal: this.signal,
-          });
-          const finalText = extractTextContent(finalResponse as AIMessage);
-          yield* this.handleDirectResponse(finalText ?? '', ctx);
-          return;
+          // `response` carries tool_calls we are deliberately not executing.
+          // Appending it without the matching ToolMessages makes every provider
+          // reject the request ("tool_calls must be followed by tool messages"),
+          // so send the reminder on top of the history without that response.
+          // Call LLM WITHOUT tools to force text generation.
+          try {
+            const { response: finalResponse } = await callLlmWithMessages(
+              [...messages, formatReminder],
+              { model: this.model, signal: this.signal },
+            );
+            const finalText = extractTextContent(finalResponse as AIMessage);
+            yield* this.handleDirectResponse(finalText ?? '', ctx);
+            return;
+          } catch (error) {
+            // Degrade to the normal loop rather than killing the whole run.
+            logger.warn(
+              `[agent] forced final answer failed, continuing loop: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
         }
       }
 
@@ -288,7 +302,12 @@ export class Agent {
 
       messages.push(...toolMessages);
 
-      if (denied) {
+      // A denial only ends the run when a human actually refused. On headless
+      // channels (gateway, cron) there is no approval callback, so every
+      // sensitive call is auto-denied — aborting there sent the user nothing
+      // at all. Keep looping instead: the ToolMessage above tells the model
+      // the tool is unavailable and it can still produce an answer.
+      if (denied && this.toolExecutor.canPromptForApproval) {
         const totalTime = Date.now() - ctx.startTime;
         yield {
           type: 'done',
@@ -315,7 +334,9 @@ export class Agent {
         const distinctDataTools = new Set(toolRecords.filter(t => dataTools.has(t.tool)).map(t => t.tool));
         if (masterSkillUsed && distinctDataTools.size >= 2) {
           ctx.formatReminderInjected = true;
-          messages.push(new SystemMessage(
+          // HumanMessage, not SystemMessage: @langchain/anthropic rejects any
+          // system message that is not the first one in the array.
+          messages.push(new HumanMessage(
             `RAPPEL FORMAT (CRITICAL) — Tu as maintenant toutes les données. Génère le rapport EXACTEMENT dans ce format :\n` +
             `╔═══════════════════════════════════════════════════════════╗\n` +
             `║  RAPPORT D'ANALYSE — [COMPANY] ([TICKER])                 ║\n` +
@@ -474,8 +495,13 @@ export class Agent {
           name: event.tool,
         }));
       } else if (event.type === 'tool_denied' && event.toolCallId) {
+        // On headless channels nobody could be asked, so say so: the model can
+        // then answer from what it already has instead of the run dying silently.
+        const content = this.toolExecutor.canPromptForApproval
+          ? 'Tool execution denied by user.'
+          : `Tool '${event.tool}' is not available on this channel because it requires interactive approval. Do not retry it; answer with the information you already have.`;
         toolMessageMap.set(event.toolCallId, new ToolMessage({
-          content: 'Tool execution denied by user.',
+          content,
           tool_call_id: event.toolCallId,
           name: event.tool,
         }));

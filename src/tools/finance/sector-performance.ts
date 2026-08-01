@@ -61,7 +61,20 @@ const SectorPerformanceSchema = z.object({
     .describe('Include SPY/QQQ/IWM as comparison benchmarks. Defaults to true.'),
 });
 
-function pct(num: unknown): number | null {
+// Yahoo is inconsistent about units. `regularMarketChangePercent`,
+// `fiftyTwoWeekChangePercent` and `ytdReturn` are already in percentage points
+// (-0.216235 means -0.22%), while the `*AverageChangePercent` family is a ratio
+// (-0.0019 means -0.19%). Multiplying the first group by 100 inflated every
+// sector return by 100x, so each field is now converted with the right helper.
+
+/** Round a value that is already expressed in percentage points. */
+export function pctPoints(num: unknown): number | null {
+  if (typeof num !== 'number' || !Number.isFinite(num)) return null;
+  return Number(num.toFixed(2));
+}
+
+/** Convert a ratio (0.0364) into percentage points (3.64). */
+export function pctFromRatio(num: unknown): number | null {
   if (typeof num !== 'number' || !Number.isFinite(num)) return null;
   return Number((num * 100).toFixed(2));
 }
@@ -94,9 +107,10 @@ async function fetchSectorRow(etf: SectorEtf): Promise<SectorRow> {
       sector: etf.sector,
       emoji: etf.emoji,
       price: asNumber(quote.regularMarketPrice),
-      dayChangePct: pct(quote.regularMarketChangePercent as number),
-      fiveDayChangePct: pct(quote.fiveDayAverageChangePercent as number),
-      ytdChangePct: pct(quote.ytdReturn as number) ?? pct(quote.fiftyTwoWeekChangePercent as number),
+      dayChangePct: pctPoints(quote.regularMarketChangePercent as number),
+      fiveDayChangePct: pctFromRatio(quote.fiveDayAverageChangePercent as number),
+      ytdChangePct:
+        pctPoints(quote.ytdReturn as number) ?? pctPoints(quote.fiftyTwoWeekChangePercent as number),
       marketCap: asNumber(quote.marketCap),
       fiftyTwoWeekHigh: asNumber(quote.fiftyTwoWeekHigh),
       fiftyTwoWeekLow: asNumber(quote.fiftyTwoWeekLow),

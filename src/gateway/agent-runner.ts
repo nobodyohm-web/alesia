@@ -76,12 +76,7 @@ export async function runAgentForMessage(req: AgentRunRequest): Promise<string> 
   const session = isolated ? null : getSession(req.sessionKey, req.model);
   let finalAnswer = '';
 
-  const run = async () => {
-    if (session) {
-      session.isRunning = true;
-      session.history.saveUserQuery(req.query);
-    }
-
+  const runTurns = async () => {
     const agent = await Agent.create({
       model: req.model,
       modelProvider: req.modelProvider,
@@ -133,9 +128,23 @@ export async function runAgentForMessage(req: AgentRunRequest): Promise<string> 
     if (session && req.isHeartbeat && finalAnswer.trim().toUpperCase().includes(HEARTBEAT_OK_TOKEN)) {
       session.history.pruneLastTurn();
     }
+  };
 
+  const run = async () => {
     if (session) {
-      session.isRunning = false;
+      session.isRunning = true;
+      session.history.saveUserQuery(req.query);
+    }
+
+    try {
+      await runTurns();
+    } finally {
+      // Must run even when the turn throws: the gateway queues every inbound
+      // message while `isRunning` is set, and only a running agent drains that
+      // queue — leaving the flag up wedges the chat until the process restarts.
+      if (session) {
+        session.isRunning = false;
+      }
     }
   };
 

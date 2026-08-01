@@ -1,5 +1,41 @@
 import { describe, test, expect } from 'bun:test';
-import { sectorPerformanceTool } from './sector-performance.js';
+import { pctFromRatio, pctPoints, sectorPerformanceTool } from './sector-performance.js';
+
+// Regression guard: Yahoo mixes units across fields. `regularMarketChangePercent`,
+// `fiftyTwoWeekChangePercent` and `ytdReturn` are already percentage points,
+// while the `*AverageChangePercent` family is a ratio. Multiplying the first
+// group by 100 inflated every sector return by 100x.
+describe('percentage conversion', () => {
+  test('pctPoints leaves percentage-point values alone', () => {
+    // Real Yahoo payload: XLK regularMarketChangePercent for a -0.22% day.
+    expect(pctPoints(-0.216235)).toBe(-0.22);
+    expect(pctPoints(36.42199)).toBe(36.42);
+    expect(pctPoints(0)).toBe(0);
+  });
+
+  test('pctFromRatio converts ratios to percentage points', () => {
+    // Real Yahoo payload: AAPL fiftyDayAverageChangePercent for a -0.19% gap.
+    expect(pctFromRatio(-0.0019043203)).toBe(-0.19);
+    expect(pctFromRatio(0.05081681)).toBe(5.08);
+  });
+
+  test('both reject non-finite input', () => {
+    for (const helper of [pctPoints, pctFromRatio]) {
+      expect(helper(null)).toBeNull();
+      expect(helper(undefined)).toBeNull();
+      expect(helper(NaN)).toBeNull();
+      expect(helper(Infinity)).toBeNull();
+      expect(helper('1.5')).toBeNull();
+    }
+  });
+
+  test('a 1% day never reads as 100%', () => {
+    const price = 101;
+    const previousClose = 100;
+    const yahooField = ((price - previousClose) / previousClose) * 100; // 1.0
+    expect(pctPoints(yahooField)).toBeCloseTo(1, 5);
+  });
+});
 
 describe('sectorPerformanceTool', () => {
   test('exposes the expected name', () => {

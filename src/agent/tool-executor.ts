@@ -70,6 +70,17 @@ export class AgentToolExecutor {
   }
 
   /**
+   * Whether a human can actually be asked to approve a sensitive tool.
+   *
+   * False on headless channels (WhatsApp gateway, cron), where approval
+   * requests are auto-denied. Callers use this to tell a deliberate user
+   * refusal apart from "nobody was there to ask".
+   */
+  get canPromptForApproval(): boolean {
+    return this.requestToolApproval !== undefined;
+  }
+
+  /**
    * Execute all tool calls from an AIMessage response.
    * Concurrent-safe tools run in parallel batches; others run serially.
    */
