@@ -147,6 +147,15 @@ bun dev                  # watch mode
 
 The engine registers as tools (`trade_setup`, `technical_analysis`, …) inside the agent's registry, so it is reachable from a natural-language question as well as directly from the backtest scripts.
 
+### Desktop launchers
+
+```bash
+./launchers/build.sh macos      # Alesia.app — drag onto the Dock
+./launchers/build.sh windows    # Alesia.exe — pin to the taskbar
+```
+
+On Windows, `launchers/Alesia.cmd` is committed and needs no build at all. Alesia is a terminal UI, so every launcher opens a terminal rather than hiding one. See [launchers/README.md](launchers/README.md) — including why a Dock-launched app cannot find a Bun installed in `~/.bun/bin`, which is the failure these are built around.
+
 ---
 
 ## What this repository is good for

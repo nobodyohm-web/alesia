@@ -68,3 +68,7 @@ coverage.json
 # Claude Code Development Kit
 tasks/
 Risk.local.md
+
+# Generated desktop launchers (machine-specific path / 112MB binary)
+Alesia.app/
+launchers/Alesia.exe
